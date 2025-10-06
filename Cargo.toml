@@ -1,0 +1,9 @@
+[package]
+name = "kilkea"
+version = "0.1.0"
+edition = "2024"
+authors = ["tayenx3 kontajiousgd00@gmail.com"]
+license = "Apache 2.0"
+
+[dependencies]
+colored = "3.0.0"
