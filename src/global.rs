@@ -78,7 +78,8 @@ pub enum CompileValue {
     Float,
     String,
     Boolean,
-    Unit
+    Unit,
+    None
 }
 
 impl CompileValue {
@@ -88,7 +89,8 @@ impl CompileValue {
             Self::Float => "float".to_string(),
             Self::String => "string".to_string(),
             Self::Boolean => "boolean".to_string(),
-            Self::Unit => "()".to_string()
+            Self::Unit => "()".to_string(),
+            Self::None => "".to_string()
         }
     }
 }
