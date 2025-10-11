@@ -2,8 +2,11 @@
 //! 
 //! * Contains the AST compiler, and the Kilkwell codegen tool
 
-pub mod kilkwell;
 pub mod compiler;
+pub mod types;
 
 #[allow(unused_imports)]
-pub use kilkwell::*;
+pub use {
+    compiler::*,
+    types::*,
+};

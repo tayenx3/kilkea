@@ -18,7 +18,8 @@ pub enum TokenType {
     LBrace,
     RBrace,
 
-    Semicolon
+    Semicolon,
+    Colon
 }
 
 impl TokenType {
@@ -31,6 +32,7 @@ impl TokenType {
                 TokenType::LBrace => "'{'".to_string(),
                 TokenType::RBrace => "'}'".to_string(),
                 TokenType::Semicolon => "';'".to_string(),
+                TokenType::Colon => "':'".to_string(),
                 _ => unreachable!()
             },
             _ => str
@@ -80,6 +82,7 @@ fn sel_token(lexeme: &String, span: &Span) -> Token {
             "{" => TokenType::LBrace,
             "}" => TokenType::RBrace,
             ";" => TokenType::Semicolon,
+            ":" => TokenType::Colon,
             _ => if lexeme.parse::<i64>().is_ok() {
                 TokenType::Int
             } else if lexeme.parse::<f64>().is_ok() {
@@ -207,6 +210,9 @@ pub fn tokenize(source: &String) -> Vec<Token> {
                             };
                             tokens.push(sel_token(&current, &span));
                             current.clear();
+                            start_pos = i;
+                        }
+                        if current.is_empty() {
                             start_pos = i;
                         }
                         

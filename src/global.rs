@@ -1,4 +1,4 @@
-use core::fmt;
+use std::fmt;
 use std::collections::HashMap;
 use once_cell::unsync::Lazy;
 pub fn prec(op: &String) -> Option<(i32, i32)> {
@@ -51,46 +51,55 @@ impl fmt::Display for ECode {
 }
 
 pub const COMBINED_SYMBOLS: &[&str] = &["==", ">=", "<=", "++"];
-pub const KEYWORDS: &[&str] = &["let", "if", "else"];
+pub const KEYWORDS: &[&str] = &["if", "else", "mut", "struct", "enum", "func"];
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
-pub struct Scope {
-    symbols: HashMap<String, CompileValue>
+pub enum ParseType {
+    Determined(String),
+    Inferred
 }
 
-impl Scope {
-    pub fn new() -> Self {
-        Self {
-            symbols: HashMap::new()
-        }
-    }
-
-    pub fn find(&self, s: &String) -> Option<CompileValue> {
-        self.symbols.get(s).cloned()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
 #[allow(dead_code)]
-pub enum CompileValue {
-    Integer,
-    Float,
+pub enum Type {
+    Int8, Int16, Int32, Int64,
+    Float32, Float64,
+    UInt8, UInt16, UInt32, UInt64,
     String,
+    Char,
     Boolean,
+    Alias(String),
+    Void,
     Unit,
-    None
+    Undetermined
 }
 
-impl CompileValue {
-    pub fn to_type(&self) -> String {
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Integer => "integer".to_string(),
-            Self::Float => "float".to_string(),
-            Self::String => "string".to_string(),
-            Self::Boolean => "boolean".to_string(),
-            Self::Unit => "()".to_string(),
-            Self::None => "".to_string()
+            Self::Int8 => write!(f, "i8"),
+            Self::Int16 => write!(f, "i16"),
+            Self::Int32 => write!(f, "i32"),
+            Self::Int64 => write!(f, "i64"),
+            Self::Float32 => write!(f, "f32"),
+            Self::Float64 => write!(f, "f64"),
+            Self::UInt8 => write!(f, "u8"),
+            Self::UInt16 => write!(f, "u16"),
+            Self::UInt32 => write!(f, "u32"),
+            Self::UInt64 => write!(f, "u64"),
+            Self::String => write!(f, "string"),
+            Self::Char => write!(f, "char"),
+            Self::Boolean => write!(f, "bool"),
+            Self::Alias(s) => write!(f, "{}", s),
+            Self::Void => write!(f, "void"),
+            Self::Unit => write!(f, "unit"),
+            Self::Undetermined => write!(f, "{{undetermined}}")
         }
     }
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[allow(dead_code)]
+pub enum Symbol {
+    Variable { name: String, type_: Type, mutability: bool }
 }

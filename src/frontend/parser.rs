@@ -7,10 +7,11 @@ use colored::Colorize;
 pub struct ParseError {
     pub code: ECode,
     pub details: String,
-    pub secondary_details: String,
     pub span: Span,
     pub src: String,
     pub path: String,
+    pub note: Option<String>,
+    pub help: Option<String>
 }
 
 impl fmt::Display for ParseError {
@@ -20,7 +21,7 @@ impl fmt::Display for ParseError {
         let mut output = String::new();
         
         // Header
-        output.push_str(&format!("{}", format!("error[{}]: {}\n", self.code, self.details).red().bold()));
+        output.push_str(&format!("{}", format!("error[{}]:\n", self.code).red().bold()));
         
         // Location line
         let location_info = self.format_location(SPREAD);
@@ -29,6 +30,31 @@ impl fmt::Display for ParseError {
         // Error details
         let error_line = self.format_error_line(SPREAD);
         output.push_str(&error_line);
+
+        if let Some(note) = &self.note {
+            output.push_str(
+                &format!(
+                    " {:width$} = note: {}\n", 
+                    "", 
+                    note, 
+                    width = self.calculate_max_digits(
+                        self.span.line + SPREAD
+                    )
+                )
+            )
+        }
+        if let Some(help) = &self.help {
+            output.push_str(
+                &format!(
+                    " {:width$} = help: {}\n", 
+                    "", 
+                    help, 
+                    width = self.calculate_max_digits(
+                        self.span.line + SPREAD
+                    )
+                )
+            )
+        }
         
         write!(f, "{}", output)
     }
@@ -81,7 +107,7 @@ impl ParseError {
         result.push_str(&format!(
             "\n {:width$} | {}",
             ">".repeat(digits).red().bold(),
-            self.secondary_details.red().bold(),
+            self.details.red().bold(),
             width = digits
         ));
         
@@ -138,7 +164,6 @@ impl ParseError {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ASTNode {
-    Module(Vec<ASTNode>),
     IntLit(i64),
     FloatLit(f64),
     StringLit(String),
@@ -146,31 +171,52 @@ pub enum ASTNode {
     Identifier(String),
 
     BinOp {
-        lhs: Box<ASTNode>,
-        rhs: Box<ASTNode>,
-        op: String
+        lhs: Box<Node>,
+        rhs: Box<Node>,
+        op: (String, Span)
     },
     UnaOp {
-        operand: Box<ASTNode>,
-        op: String
+        operand: Box<Node>,
+        op: (String, Span)
     },
     If {
-        condition: Box<ASTNode>,
-        then_body: Box<ASTNode>,
-        else_body: Box<ASTNode>
+        condition: Box<Node>,
+        then_body: Box<Node>,
+        else_body: Box<Node>
     },
-    Block(Vec<ASTNode>),
-    Statement(Box<ASTNode>)
+    Declaration {
+        type_: (ParseType, Option<Span>),
+        mutability: bool,
+        name: (String, Span)
+    },
+    DeclarationWithValue {
+        type_: (ParseType, Option<Span>),
+        mutability: bool,
+        name: (String, Span),
+        value: Box<Node>
+    },
+    Block(Vec<Node>),
+    Statement(Box<Node>)
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
+pub struct Node {
+    pub ast_repr: ASTNode,
+    pub span: Span
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct Module(pub Vec<Node>);
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
 pub struct Parser {
-    pos: usize,
-    tokens: Vec<Token>,
-    scopes: Vec<Scope>,
-    src: String,
-    path: String
+    pub(crate) pos: usize,
+    pub(crate) tokens: Vec<Token>,
+    pub(crate) src: String,
+    pub(crate) path: String
 }
 
 #[allow(dead_code)]
@@ -179,7 +225,6 @@ impl Parser {
         Self {
             pos: 0,
             tokens,
-            scopes: vec![ Scope::new() ],
             src: src.clone(),
             path: path.clone()
         }
@@ -197,8 +242,8 @@ impl Parser {
     }
 
     
-    pub fn parse_program(&mut self) -> (ASTNode, Vec<ParseError>) {
-        let mut stmts: Vec<ASTNode> = Vec::new();
+    pub fn parse_program(&mut self) -> (Module, Vec<ParseError>) {
+        let mut stmts: Vec<Node> = Vec::new();
         let mut errors: Vec<ParseError> = Vec::new();
 
         while self.get(0).cloned().is_some() {
@@ -214,33 +259,31 @@ impl Parser {
             }
         }
 
-        (ASTNode::Module(stmts), errors)
+        (Module(stmts), errors)
     }
 
     
-    pub fn parse_expression(&mut self, min_bp: i32) -> Result<ASTNode, ParseError> {
+    pub fn parse_expression(&mut self, min_bp: i32) -> Result<Node, ParseError> {
         let span = if let Some(current_token) = self.get(0).cloned() {
             current_token.span
         } else {
             return Err(ParseError {
                 code: ECode::UnexpectedEOF,
-                details: String::from("Unexpected end of input"),
-                secondary_details: String::from("Expected expression, found end of input"),
+                details: String::from("unexpected end of input"),
                 span: self.eof(),
                 src: self.src.clone(),
-                path: self.path.clone()
+                path: self.path.clone(),
+                note: None,
+                help: None
             })
         };
 
-        let mut lhs: ASTNode = self.nud()?;
-        self.full_check(&lhs, span)?;
+        let mut lhs = self.nud()?;
 
         while let Some(current_token) = self.get(0).cloned() {
-            let span = current_token.span;
-
-            let ((lbp, rbp), op) = {
+            let ((lbp, rbp), op, s) = {
                 if let TokenType::Operator = current_token.token_type {
-                    (prec(&current_token.lexeme).unwrap(), current_token.lexeme.clone())
+                    (prec(&current_token.lexeme).unwrap(), current_token.lexeme.clone(), current_token.span)
                 } else {
                     break
                 }
@@ -251,57 +294,53 @@ impl Parser {
 
             self.pos += 1;
             let rhs = self.parse_expression(rbp)?;
-            lhs = ASTNode::BinOp {
-                lhs: Box::new(lhs),
-                rhs: Box::new(rhs),
-                op: op
+            lhs = Node { 
+                ast_repr: ASTNode::BinOp {
+                    lhs: Box::new(lhs),
+                    rhs: Box::new(rhs),
+                    op: (op, s)
+                },
+                span: span
             };
-            self.full_check(&lhs, span)?;
         }
 
         Ok(lhs)
     }
 
     
-    pub fn nud(&mut self) -> Result<ASTNode, ParseError> {
+    pub fn nud(&mut self) -> Result<Node, ParseError> {
         if let Some(current_token) = self.get(0).cloned() {
             let value = current_token.lexeme.clone();
             match current_token.token_type {
                 TokenType::Int => {
                     self.pos += 1;
                     let i = ASTNode::IntLit(value.parse::<i64>().unwrap());
-                    self.full_check(&i, current_token.span)?;
-                    Ok(i)
+                    Ok( Node{ ast_repr: i, span: current_token.span } )
                 },
                 TokenType::Float => {
                     self.pos += 1;
                     let i = ASTNode::FloatLit(value.parse::<f64>().unwrap());
-                    self.full_check(&i, current_token.span)?;
-                    Ok(i)
+                    Ok( Node{ ast_repr: i, span: current_token.span } )
                 },
                 TokenType::String => {
                     self.pos += 1;
                     let i = ASTNode::StringLit(value.clone());
-                    self.full_check(&i, current_token.span)?;
-                    Ok(i)
+                    Ok( Node{ ast_repr: i, span: current_token.span } )
                 },
                 TokenType::Bool => {
                     self.pos += 1;
                     let i = ASTNode::Bool(value.parse::<bool>().unwrap());
-                    self.full_check(&i, current_token.span)?;
-                    Ok(i)
+                    Ok( Node{ ast_repr: i, span: current_token.span } )
                 },
                 TokenType::Identifier => {
                     self.pos += 1;
                     let i = ASTNode::Identifier(value.clone());
-                    self.full_check(&i, current_token.span)?;
-                    Ok(i)
+                    Ok( Node{ ast_repr: i, span: current_token.span } )
                 },
                 TokenType::LParen => {
                     self.pos += 1;
                     let expr = self.parse_expression(0)?;
                     self.expect(&TokenType::RParen)?;
-                    self.full_check(&expr, current_token.span)?;
                     Ok(expr)
                 },
                 TokenType::Operator => {
@@ -309,107 +348,89 @@ impl Parser {
                     let operand = self.nud()?;
                     let un = ASTNode::UnaOp { 
                         operand: Box::new(operand), 
-                        op: current_token.lexeme
+                        op: (current_token.lexeme, current_token.span)
                     };
-                    self.full_check(&un, current_token.span)?;
-                    Ok(un)
+                    Ok( Node{ ast_repr: un, span: current_token.span } )
                 },
                 TokenType::Keyword => {
                     match &*value {
                         "if" => {
                             let i = self.parse_if()?;
-                            self.full_check(&i, current_token.span)?;
                             Ok(i)
                         },
-                        "let" => Ok(ASTNode::IntLit(0)), // Variable declarations later
                         _ => return Err(ParseError {
                             code: ECode::UnexpectedToken,
-                            details: format!("Invalid keyword: '{}'", value),
-                            secondary_details: format!("Expected one of 'if', 'let'; found '{}'", value),
+                            details: format!("invalid keyword - `{}`", value),
                             span: current_token.span,
                             src: self.src.clone(),
-                            path: self.path.clone()
+                            path: self.path.clone(),
+                            note: None,
+                            help: if value == "else" {
+                                Some("add a `if` clause before the `else` clause".to_string())
+                            } else { None}
                         })
                     }
                 },
                 TokenType::LBrace => {
                     let i = self.parse_block()?;
-                    self.full_check(&i, current_token.span)?;
                     Ok(i)
                 },
-                _ => todo!("{}", current_token)
+                _ => Err(ParseError {
+                    code: ECode::UnexpectedToken,
+                    details: format!("unexpected token - {}", current_token),
+                    span: self.eof(),
+                    src: self.src.clone(),
+                    path: self.path.clone(),
+                    note: None,
+                    help: None
+                })
             }
         } else {
             Err(ParseError {
                 code: ECode::UnexpectedEOF,
-                details: String::from("Unexpected end of input"),
-                secondary_details: String::from("Expected expression, found end of input"),
+                details: String::from("unexpected end of input, expected expression"),
                 span: self.eof(),
                 src: self.src.clone(),
-                path: self.path.clone()
+                path: self.path.clone(),
+                note: None,
+                help: None
             })
         }
     }
 
     
-    fn parse_if(&mut self) -> Result<ASTNode, ParseError> {        
+    fn parse_if(&mut self) -> Result<Node, ParseError> {        
         self.pos += 1;
         let if_span = if let Some(current_token) = self.get(0).cloned() {
             current_token.span
         } else {
             return Err(ParseError {
                 code: ECode::UnexpectedEOF,
-                details: String::from("Unexpected end of input"),
-                secondary_details: String::from("Expected expression, found end of input"),
+                details: String::from("expected expression, unexpected end of input"),
                 span: self.eof(),
                 src: self.src.clone(),
-                path: self.path.clone()
+                path: self.path.clone(),
+                note: None,
+                help: None
             })
         };
 
         let condition = self.parse_expression(0)?;
+        let then_body = self.parse_expression(0)?;
+        let else_body = self.parse_else()?;
         
-        match self.full_check(&condition, if_span)? {
-            CompileValue::Boolean => {
-                let then_body = if let Some(token) = self.get(0) {
-                    if token.token_type == TokenType::LBrace {
-                        self.parse_block()?
-                    } else {
-                        let stmt = self.parse_statement()?;
-                        ASTNode::Block(vec![stmt])
-                    }
-                } else {
-                    return Err(ParseError {
-                        code: ECode::UnexpectedEOF,
-                        details: String::from("Expected then body after 'if' condition"),
-                        secondary_details: String::from("Expected block or statement, found end of input"),
-                        span: self.eof(),
-                        src: self.src.clone(),
-                        path: self.path.clone()
-                    })
-                };
-
-                let else_body = self.parse_else()?;
-
-                Ok(ASTNode::If {
-                    condition: Box::new(condition),
-                    then_body: Box::new(then_body),
-                    else_body: Box::new(else_body)
-                })
+        Ok(Node {
+            ast_repr: ASTNode::If {
+                condition: Box::new(condition),
+                then_body: Box::new(then_body),
+                else_body: Box::new(else_body)
             },
-            other => Err(ParseError {
-                code: ECode::MismatchedTypes,
-                details: format!("'if' condition must be boolean, found {}", other.to_type()),
-                secondary_details: format!("Expected boolean, found {}", other.to_type()),
-                span: if_span,
-                src: self.src.clone(),
-                path: self.path.clone()
-            })
-        }
+            span: if_span
+        })
     }
 
     
-    fn parse_else(&mut self) -> Result<ASTNode, ParseError> {
+    fn parse_else(&mut self) -> Result<Node, ParseError> {
         if let Some(current_token) = self.get(0) {
             if let TokenType::Keyword = current_token.token_type {
                 if current_token.lexeme == "else" {
@@ -419,36 +440,51 @@ impl Parser {
                         if token.token_type == TokenType::LBrace {
                             self.parse_block()
                         } else {
+                            let span = match self.get(0).cloned() {
+                                Some(o) => o.span.clone(),
+                                None => return Err(ParseError {
+                                    code: ECode::UnexpectedEOF,
+                                    details: String::from("expected expression, enexpected end of input"),
+                                    span: self.eof(),
+                                    src: self.src.clone(),
+                                    path: self.path.clone(),
+                                    note: None,
+                                    help: None
+                                })
+                            };
                             let stmt = self.parse_statement()?;
-                            Ok(ASTNode::Block(vec![stmt]))
+                            Ok(Node { ast_repr: ASTNode::Block(vec![stmt]), span })
                         }
                     } else {
                         Err(ParseError {
                             code: ECode::UnexpectedEOF,
-                            details: String::from("Expected else body after 'else'"),
-                            secondary_details: String::from("Expected block or statement, found end of input"),
+                            details: String::from("epected else body after `else`"),
                             span: self.eof(),
                             src: self.src.clone(),
-                            path: self.path.clone()
+                            path: self.path.clone(),
+                            note: None,
+                            help: None
                         })
                     }
                 } else {
-                    Ok(ASTNode::Block(vec![]))
+                    Ok(Node { ast_repr: ASTNode::Block(vec![]), span: current_token.span })
                 }
             } else {
-                Ok(ASTNode::Block(vec![]))
+                Ok(Node { ast_repr: ASTNode::Block(vec![]), span: current_token.span })
             }
         } else {
-            Ok(ASTNode::Block(vec![]))
+            Ok(Node { ast_repr: ASTNode::Block(vec![]), span: self.eof() })
         }
     }
 
     
-    fn parse_block(&mut self) -> Result<ASTNode, ParseError> {
+    fn parse_block(&mut self) -> Result<Node, ParseError> {
         self.pos += 1;
-        let mut block: Vec<ASTNode> = Vec::new();
+        let mut block: Vec<Node> = Vec::new();
+        let mut span = self.eof();
 
         while let Some(current_token) = self.get(0) {
+            span = current_token.span.clone();
             if current_token.token_type == TokenType::RBrace {
                 self.pos += 1;
                 break;
@@ -468,37 +504,55 @@ impl Parser {
             }
         }
 
-        Ok(ASTNode::Block(block))
+        Ok(Node { ast_repr: ASTNode::Block(block), span })
     }
 
-    fn parse_statement(&mut self) -> Result<ASTNode, ParseError> {
-        let span = if let Some(current_token) = self.get(0).cloned() {
-            current_token.span
-        } else {
-            return Err(ParseError {
-                code: ECode::UnexpectedEOF,
-                details: String::from("Unexpected end of input"),
-                secondary_details: String::from("Expected expression or statement, found end of input"),
-                span: self.eof(),
-                src: self.src.clone(),
-                path: self.path.clone()
-            })
-        };
-        let mut r = self.parse_expression(0)?;
-        if let Some(Token { token_type, .. }) = self.get(0) {
-            if *token_type == TokenType::Semicolon {
-                r = ASTNode::Statement(Box::new(r));
+    fn parse_statement(&mut self) -> Result<Node, ParseError> {
+        let mut var_decl_parser = VariableDeclParser::new(&self);
+        if let Ok(v) = var_decl_parser.try_parse() {
+            self.pos = var_decl_parser.pos;
+            if let Some(Token { token_type: TokenType::Semicolon, .. }) = self.get(0).cloned() {
                 self.pos += 1;
+                return Ok(Node { ast_repr: ASTNode::Statement(Box::new(v.clone())), span: v.span })
+            } else if let Some(Token { token_type: TokenType::Equals, .. }) = self.get(0).cloned() {
+                self.pos += 1;
+                let value = self.parse_expression(0)?;
+                let v_ast = v.clone().ast_repr;
+                if let ASTNode::Declaration { name, type_, mutability } = v_ast {
+                    let r = Node {
+                        ast_repr: ASTNode::DeclarationWithValue {
+                            type_,
+                            mutability,
+                            name,
+                            value: Box::new(value)
+                        },
+                        span: v.span
+                    };
+                    if let Some(Token { token_type: TokenType::Semicolon, .. }) = self.get(0).cloned() {
+                        self.pos += 1;
+                        return Ok(Node { ast_repr: ASTNode::Statement(Box::new(r.clone())), span: r.span })
+                    } else {
+                        return Ok(r)
+                    }
+                }
             }
-        }
-        self.full_check(&r, span)?;
+            return Ok(v)
+        } else {
+            let mut r = self.parse_expression(0)?;
+            if let Some(Token { token_type, .. }) = self.get(0) {
+                if *token_type == TokenType::Semicolon {
+                    r = Node { ast_repr: ASTNode::Statement(Box::new(r.clone())), span: r.span };
+                    self.pos += 1;
+                }
+            }
 
-        Ok(r)
+            Ok(r)
+        }
     }
 
     
     fn eof(&self) -> Span {
-        let mut offset = -1;
+        let mut offset = 0;
         while self.get(offset).is_none() {
             offset -= 1;
         }
@@ -515,21 +569,23 @@ impl Parser {
             } else {
                 Err(ParseError {
                     code: ECode::ExpectedToken,
-                    details: format!("Expected {}, found {}", expected.to_error_repr(), current_token),
-                    secondary_details: format!("Expected {}, found {}", expected.to_error_repr(), current_token),
+                    details: format!("expected {}, found {}", expected.to_error_repr(), current_token),
                     span: current_token.span,
                     src: self.src.clone(),
-                    path: self.path.clone()
+                    path: self.path.clone(),
+                    note: None,
+                    help: None
                 })
             }
         } else {
             Err(ParseError {
                 code: ECode::UnexpectedEOF,
-                details: format!("Unexpected end of input, expected {}", expected.to_error_repr()),
-                secondary_details: format!("Expected {}, found end of input", expected.to_error_repr()),
+                details: format!("unexpected end of input, expected {}", expected.to_error_repr()),
                 span: self.eof(),
                 src: self.src.clone(),
-                path: self.path.clone()
+                path: self.path.clone(),
+                note: None,
+                help: None
             })
         }
     }
@@ -543,198 +599,24 @@ impl Parser {
             } else {
                 Err(ParseError {
                     code: ECode::ExpectedToken,
-                    details: format!("Expected {} found {}", expected.to_error_repr(), current_token),
-                    secondary_details: format!("Expected {}, found {}", expected.to_error_repr(), current_token),
+                    details: format!("expected {} found {}", expected.to_error_repr(), current_token),
                     span: current_token.span,
                     src: self.src.clone(),
-                    path: self.path.clone()
+                    path: self.path.clone(),
+                    note: None,
+                    help: None
                 })
             }
         } else {
             Err(ParseError {
                 code: ECode::UnexpectedEOF,
-                details: format!("Unexpected end of input, expected {}", expected.to_error_repr()),
-                secondary_details: format!("Expected {}, found end of input", expected.to_error_repr()),
+                details: format!("unexpected end of input, expected {}", expected.to_error_repr()),
                 span: self.eof(),
                 src: self.src.clone(),
-                path: self.path.clone()
+                path: self.path.clone(),
+                note: None,
+                help: None
             })
         }
-    }
-
-    fn full_check(&self, node: &ASTNode, span: Span) -> Result<CompileValue, ParseError> {
-        match node {
-            ASTNode::Module(stmts) => {
-                for stmt in stmts {
-                    self.full_check(stmt, span)?;
-                }
-                Ok(CompileValue::Unit)
-            },
-            ASTNode::IntLit(_) | ASTNode::FloatLit(_) 
-            | ASTNode::StringLit(_) | ASTNode::Bool(_) 
-            | ASTNode::Identifier(_) => self.to_compiled_value(node, span),
-            ASTNode::Statement(s) => {
-                self.full_check(&**s, span)?; // discarded but check anyway
-                Ok(CompileValue::Unit)
-            }
-            ASTNode::BinOp { 
-                lhs, rhs, op 
-            } => {
-                let left = self.full_check(&**lhs, span)?;
-                let right = self.full_check(&**rhs, span)?;
-
-                let result = match &**op {
-                    "+" | "-" | "*" | "/" => match (&left, &right) {
-                        (CompileValue::Integer, CompileValue::Integer) => CompileValue::Integer,
-                        (CompileValue::Float, CompileValue::Float) => CompileValue::Float,
-                        _ => return Err(ParseError {
-                            code: ECode::MismatchedTypes,
-                            details: format!("Mismatched types: {} and {}", left.to_type(), right.to_type()),
-                            secondary_details: String::from("Expected 2 compatible types"),
-                            span,
-                            src: self.src.clone(),
-                            path: self.path.clone()
-                        })
-                    },
-                    "==" | "!=" | ">" | "<" | ">=" | "<=" => if left == right {
-                        CompileValue::Boolean
-                    } else {
-                        return Err(ParseError {
-                            code: ECode::MismatchedTypes,
-                            details: format!("Mismatched types: {} and {}", left.to_type(), right.to_type()),
-                            secondary_details: String::from("Expected 2 compatible types"),
-                            span,
-                            src: self.src.clone(),
-                            path: self.path.clone()
-                        })
-                    },
-                    "++" => if let (CompileValue::String, CompileValue::String) = (&left, &right) {
-                        CompileValue::String
-                    } else {
-                        return Err(ParseError {
-                            code: ECode::MismatchedTypes,
-                            details: format!("Cannot do '++' operation on types: {} and {}", left.to_type(), right.to_type()),
-                            secondary_details: String::from("Expected 2 compatible types"),
-                            span,
-                            src: self.src.clone(),
-                            path: self.path.clone()
-                        })
-                    },
-                    _ => return Err(ParseError {
-                        code: ECode::MismatchedTypes,
-                        details: format!("Invalid operator: {}", op),
-                        secondary_details: format!("Expected one of '+', '-', '*', '/', '==', '>', '<', '>=', '<=', '!=', '++'; found {}", op),
-                        span,
-                        src: self.src.clone(),
-                        path: self.path.clone()
-                    })
-                };
-
-                Ok(result)
-            },
-            ASTNode::UnaOp {
-                operand, op
-            } => {
-                let operand = self.full_check(&**operand, span)?;
-                match &**op {
-                    "+" | "-" => match operand {
-                        CompileValue::Integer | CompileValue::Float => Ok(operand),
-                        _ => return Err(ParseError {
-                            code: ECode::MismatchedTypes,
-                            details: format!("Cannot do '{}' unary operation on type: {} ", op, operand.to_type()),
-                            secondary_details: format!("Expected integer or float, found {}", operand.to_type()),
-                            span,
-                            src: self.src.clone(),
-                            path: self.path.clone()
-                        })
-                    },
-                    "!" => match operand {
-                        CompileValue::Boolean => Ok(operand),
-                        _ => return Err(ParseError {
-                            code: ECode::MismatchedTypes,
-                            details: format!("Cannot do '!' unary operation on type: {} ", operand.to_type()),
-                            secondary_details: format!("Expected boolean, found {}", operand.to_type()),
-                            span,
-                            src: self.src.clone(),
-                            path: self.path.clone()
-                        })
-                    },
-                    _ => return Err(ParseError {
-                        code: ECode::MismatchedTypes,
-                        details: format!("Invalid unary operator: {}", op),
-                        secondary_details: format!("Expected one of '+', '-', '!'; found {}", op),
-                        span,
-                        src: self.src.clone(),
-                        path: self.path.clone()
-                    })
-                }
-            }
-            ASTNode::If {
-                condition: _, then_body, else_body
-            } => {
-                // the condition's type is already checked in parse_if()
-                let then_result = self.full_check(&**then_body, span)?;
-                let else_result = self.full_check(&**else_body, span)?;
-                if !(then_result == else_result) && then_result != CompileValue::None && else_result != CompileValue::None {
-                    return Err(ParseError {
-                        code: ECode::MismatchedTypes,
-                        details: format!("Mismatched types: {} and {}", then_result.to_type(), else_result.to_type()),
-                        secondary_details: String::from("Expected the same return types"),
-                        span,
-                        src: self.src.clone(),
-                        path: self.path.clone()
-                    })
-                }
-                match (&then_result, &else_result) {
-                    (_, CompileValue::None) if then_result != CompileValue::None => Ok(then_result),
-                    (CompileValue::None, _) if else_result != CompileValue::None => Ok(else_result),
-                    (CompileValue::None, CompileValue::None) => Ok(CompileValue::None),
-                    (_, _) => Ok(then_result)
-                }
-            },
-            ASTNode::Block(stmts) => {
-                let mut r: CompileValue = CompileValue::None;
-                for stmt in stmts {
-                    r = self.full_check(stmt, span)?;
-                }
-                Ok(r)
-            },
-        }
-    }
-
-    fn to_compiled_value(&self, node: &ASTNode, span: Span) -> Result<CompileValue, ParseError> {
-        match node {
-            ASTNode::IntLit(_) => Ok(CompileValue::Integer),
-            ASTNode::FloatLit(_) => Ok(CompileValue::Float),
-            ASTNode::StringLit(_) => Ok(CompileValue::String),
-            ASTNode::Bool(_) => Ok(CompileValue::Boolean),
-            ASTNode::Identifier(i) => if let Some(value) = self.find_in_scopes(i) {
-                Ok(value)
-            } else {
-                Err(ParseError {
-                    code: ECode::UndefinedIdentifier,
-                    details: format!("Undefined identifier: {}", i),
-                    secondary_details: format!("Undefined identifier: {}", i),
-                    span,
-                    src: self.src.clone(),
-                    path: self.path.clone()
-                })
-            },
-            _ => Ok(CompileValue::Unit)
-        }
-    }
-
-    fn find_in_scopes(&self, s: &String) -> Option<CompileValue> {
-        let mut reversed = self.scopes.clone();
-        reversed.reverse();
-
-        for scope in reversed {
-            match scope.find(s) {
-                Some(s) => return Some(s),
-                None => continue
-            }
-        }
-
-        None
     }
 }
