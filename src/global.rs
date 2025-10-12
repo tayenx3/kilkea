@@ -1,5 +1,6 @@
 use std::fmt;
 use std::collections::HashMap;
+use cranelift::prelude::Value;
 use once_cell::unsync::Lazy;
 pub fn prec(op: &String) -> Option<(i32, i32)> {
     match &**op {
@@ -105,4 +106,17 @@ impl fmt::Display for Type {
 #[allow(dead_code)]
 pub enum Symbol {
     Variable { name: String, type_: Type, mutability: bool }
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[allow(dead_code)]
+pub enum CompilerSymbol {
+    Variable { stack_offset: usize, value: TypedValue }
+}
+
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[allow(dead_code)]
+pub struct TypedValue {
+    pub value: Value,
+    pub type_: Type
 }

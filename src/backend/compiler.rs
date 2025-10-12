@@ -17,7 +17,8 @@ pub struct ASTCompiler {
     debug: bool,
     module: Module,
     src: String,
-    path: String
+    path: String,
+    table: Vec<Vec<CompilerSymbol>>
 }
 
 impl ASTCompiler {
@@ -41,7 +42,8 @@ impl ASTCompiler {
             debug,
             module,
             src,
-            path
+            path,
+            table: vec![vec![]]
         })
     }
 
@@ -293,24 +295,50 @@ impl ASTCompiler {
                             type_: Type::Float64
                         }),
                         (Type::UInt8, Type::UInt8) => Ok(TypedValue {
-                            value: builder.ins().sdiv(left.value, right.value),
+                            value: builder.ins().udiv(left.value, right.value),
                             type_: Type::UInt8
                         }),
                         (Type::UInt16, Type::UInt16) => Ok(TypedValue {
-                            value: builder.ins().sdiv(left.value, right.value),
+                            value: builder.ins().udiv(left.value, right.value),
                             type_: Type::UInt16
                         }),
                         (Type::UInt32, Type::UInt32) => Ok(TypedValue {
-                            value: builder.ins().sdiv(left.value, right.value),
+                            value: builder.ins().udiv(left.value, right.value),
                             type_: Type::UInt32
                         }),
                         (Type::UInt64, Type::UInt64) => Ok(TypedValue {
-                            value: builder.ins().sdiv(left.value, right.value),
+                            value: builder.ins().udiv(left.value, right.value),
                             type_: Type::UInt64
                         }),
                         _ => unreachable!()
                     },
                     _ => todo!("{}", op.0)
+                }
+            },
+            ASTNode::UnaOp {
+                operand, op
+            } => {
+                let operand_type = self.compile_node(*operand, builder)?;
+                match &*op.0 {
+                    "+" => Ok(operand_type),
+                    "-" => match operand_type.type_ {
+                        Type::Int8 => Ok(TypedValue { value: builder.ins().ineg(operand_type.value), type_: Type::Int8 }),
+                        Type::Int16 => Ok(TypedValue { value: builder.ins().ineg(operand_type.value), type_: Type::Int16 }),
+                        Type::Int32 => Ok(TypedValue { value: builder.ins().ineg(operand_type.value), type_: Type::Int32 }),
+                        Type::Int64 => Ok(TypedValue { value: builder.ins().ineg(operand_type.value), type_: Type::Int64 }),
+                        Type::Float32 => Ok(TypedValue { value: builder.ins().ineg(operand_type.value), type_: Type::Float32 }),
+                        Type::Float64 => Ok(TypedValue { value: builder.ins().ineg(operand_type.value), type_: Type::Float64 }),
+                        _ => unreachable!()
+                    },
+                    "!" => match operand_type.type_ {
+                        Type::Int8 => Ok(TypedValue { value: builder.ins().bnot(operand_type.value), type_: Type::Int8 }),
+                        Type::Int16 => Ok(TypedValue { value: builder.ins().bnot(operand_type.value), type_: Type::Int16 }),
+                        Type::Int32 => Ok(TypedValue { value: builder.ins().bnot(operand_type.value), type_: Type::Int32 }),
+                        Type::Int64 => Ok(TypedValue { value: builder.ins().bnot(operand_type.value), type_: Type::Int64 }),
+                        Type::Boolean => Ok(TypedValue { value: builder.ins().ineg(operand_type.value), type_: Type::Int8 }),
+                        _ => unreachable!()
+                    },
+                    _ => unreachable!()
                 }
             },
             _ => todo!("{:#?}", node.ast_repr)
@@ -337,9 +365,4 @@ impl ASTCompiler {
 
         Ok(())
     }
-}
-
-pub struct TypedValue {
-    value: Value,
-    type_: Type
 }
