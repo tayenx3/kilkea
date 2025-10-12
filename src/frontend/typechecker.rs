@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashMap, fmt};
 use colored::Colorize;
 use strsim::jaro_winkler;
 use super::*;
@@ -160,7 +160,7 @@ impl TypeError {
 
 pub struct TypeChecker {
     module: Module,
-    scopes: Vec<Vec<Symbol>>,
+    scopes: Vec<HashMap<Symbol, ()>>,
     src: String,
     path: String,
     type_registry: TypeRegistry
@@ -170,7 +170,7 @@ impl TypeChecker {
     pub fn new(module: Module, src: String, path: String) -> Self {
         Self {
             module,
-            scopes: vec![vec![]],
+            scopes: vec![HashMap::new()],
             src,
             path,
             type_registry: TypeRegistry::new()
@@ -187,9 +187,9 @@ impl TypeChecker {
 
         for scope in reversed_scopes {
             for symbol in scope {
-                if let Symbol::Variable { name, type_, mutability: _ } = symbol {
+                if let Symbol::Variable { name, type_, mutability: _ } = symbol.0 {
                     available_names.push(name.clone());
-                    if &name == i { return Ok(type_) }
+                    if name == *i { return Ok(type_) }
                 }
             }
         }
@@ -226,7 +226,7 @@ impl TypeChecker {
 
         for scope in &mut reversed_scopes {
             for symbol in scope {
-                if let Symbol::Variable { name, type_, mutability } = symbol {
+                if let Symbol::Variable { name, type_, mutability } = symbol.0 {
                     available_names.push(name.clone());
                     if name == i {
                         if *mutability {
@@ -544,9 +544,9 @@ impl TypeChecker {
                                 help: None
                             })
                         };
-                        s.push(Symbol::Variable {
+                        s.insert(Symbol::Variable {
                             name: name.0, type_: t, mutability
-                        })
+                        }, ());
                     } else {
                         if self.type_registry.is_registered(&name.0) {
                             return Err(TypeError {
@@ -559,9 +559,9 @@ impl TypeChecker {
                                 help: None
                             })
                         }
-                        s.push(Symbol::Variable {
+                        s.insert(Symbol::Variable {
                             name: name.0, type_: Type::Undetermined, mutability
-                        })
+                        }, ());
                     }
                 }
 
@@ -609,9 +609,9 @@ impl TypeChecker {
                                 help: None
                             })
                         };
-                        s.push(Symbol::Variable {
+                        s.insert(Symbol::Variable {
                             name: name.0, type_: t, mutability
-                        })
+                        }, ());
                     } else {
                         if self.type_registry.is_registered(&name.0) {
                             return Err(TypeError {
@@ -624,9 +624,9 @@ impl TypeChecker {
                                 help: None
                             })
                         }
-                        s.push(Symbol::Variable {
+                        s.insert(Symbol::Variable {
                             name: name.0, type_: value_type, mutability
-                        })
+                        }, ());
                     }
                 }
 
