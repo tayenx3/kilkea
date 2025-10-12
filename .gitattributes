@@ -1,0 +1,3 @@
+# Force GitHub to recognize your language files
+*.kl linguist-language=Lua
+*.kl linguist-detectable
