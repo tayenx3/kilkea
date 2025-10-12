@@ -1,10 +1,21 @@
 [package]
 name = "kilkea"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 authors = ["tayenx3 kontajiousgd00@gmail.com"]
 license = "Apache 2.0"
 description = "Kilkea - A statically-typed compiled programming language made for fearless concurrency and data flow. Kilkea delivers a strong type system as well as a flexible and robust syntax for ergonomic and decompressed development."
+
+build = "build.rs"
+
+include = [
+    "src/**/*",
+    "bundles/**/*",
+    "Cargo.toml",
+]
+
+[build-dependencies]
+flate2 = "1.0"
 
 [dependencies]
 # Miscellaneous

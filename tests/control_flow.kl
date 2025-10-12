@@ -1,0 +1,7 @@
+message = if !true {
+    "yea" ++ " " ++ "boi"
+} else {
+    "no" ++ " " ++ "gorl"
+}
+
+message = if !true "yea" ++ " " ++ "boi" else "no" ++ " " ++ "gorl" // compile error: `message` is already declared

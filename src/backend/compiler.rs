@@ -322,20 +322,16 @@ impl ASTCompiler {
             println!("{}", "Generating object file...".cyan());
         }
 
-        // FIXED: Just call finish() - it handles everything
         let object_product = module.finish();
 
-        // Extract the object data
         let object_data = object_product.emit()
             .map_err(|e| e.to_string())?;
 
-        // Write to file
         std::fs::write("output.o", &object_data)
             .map_err(|e| format!("Failed to write object file: {}", e))?;
 
         if self.debug {
             println!("{}", "Object file written: output.o".green());
-            println!("{}", "Link with: link /OUT:program.exe output.o kernel32.lib".yellow());
             println!("{} {}", "Object size:".green(), object_data.len());
         }
 

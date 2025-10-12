@@ -21,7 +21,7 @@ impl fmt::Display for TypeError {
         let mut output = String::new();
         
         // Header
-        output.push_str(&format!("{}", format!("error[{}]\n", self.code).red().bold()));
+        output.push_str(&format!("{}", format!("error[{}]:\n", self.code).red().bold()));
         
         // Location line
         let location_info = self.format_location(SPREAD);
@@ -34,8 +34,9 @@ impl fmt::Display for TypeError {
         if let Some(note) = &self.note {
             output.push_str(
                 &format!(
-                    " {:width$} = note: {}\n", 
+                    "\n {:width$} = {}: {}", 
                     "", 
+                    "note".cyan(),
                     note, 
                     width = self.calculate_max_digits(
                         self.span.line + SPREAD
@@ -46,8 +47,9 @@ impl fmt::Display for TypeError {
         if let Some(help) = &self.help {
             output.push_str(
                 &format!(
-                    " {:width$} = help: {}\n", 
+                    "\n {:width$} = {}: {}", 
                     "", 
+                    "help".cyan(),
                     help, 
                     width = self.calculate_max_digits(
                         self.span.line + SPREAD
@@ -87,29 +89,24 @@ impl TypeError {
         
         // Main line
         result.push_str(&format!(
-            " {:width$} | {}\n",
-            line + 1,
+            " {:width$} {} {}\n",
+            (line + 1).to_string().cyan().bold(),
+            "|".cyan().bold(),
             lines[line],
             width = digits
         ));
         result.push_str(&format!(
-            " {:width$} | {}{}",
+            " {:width$} {} {}{} {}",
             "",
+            "|".cyan().bold(),
             " ".repeat(self.span.column),
             "^".repeat(self.span.end_pos + 1 - self.span.start_pos).red().bold(),
+            self.details.red().bold(),
             width = digits
         ));
         
         // Next lines
         result.push_str(&self.format_context_lines(line, spread, true, &lines, digits));
-        
-        // Error indicator
-        result.push_str(&format!(
-            "\n {:width$} | {}",
-            ">".repeat(digits).red().bold(),
-            self.details.red().bold(),
-            width = digits
-        ));
         
         result
     }
@@ -140,9 +137,9 @@ impl TypeError {
             if let Some(line_num) = target_line {
                 if line_num < lines.len() {
                     let line_content = if is_after {
-                        format!("\n {:width$} | {}", line_num + 1, lines[line_num], width = digits)
+                        format!("\n {:width$} {} {}", (line_num + 1).to_string().cyan().bold(), "|".cyan().bold(), lines[line_num], width = digits)
                     } else {
-                        format!(" {:width$} | {}\n", line_num + 1, lines[line_num], width = digits)
+                        format!(" {:width$} {} {}\n", (line_num + 1).to_string().cyan().bold(), "|".cyan().bold(), lines[line_num], width = digits)
                     };
                     context.push_str(&line_content);
                 }
@@ -219,6 +216,71 @@ impl TypeChecker {
         })
     }
 
+    #[allow(irrefutable_let_patterns)]
+    pub fn mutate_var(&mut self, i: &String, span: Span, new: Type) -> Result<(), TypeError> {
+        let mut reversed_scopes = self.scopes.clone();
+        reversed_scopes.reverse();
+
+        let mut available_names: Vec<String> = Vec::new();
+        let mut top_contender: (Option<String>, f64) = (None, 0.0);
+
+        for scope in &mut reversed_scopes {
+            for symbol in scope {
+                if let Symbol::Variable { name, type_, mutability } = symbol {
+                    available_names.push(name.clone());
+                    if name == i {
+                        if *mutability {
+                            if *type_ != new {
+                                return Err(TypeError { 
+                                    code: ECode::MutationError, 
+                                    details: format!("`{}` has type `{}` but the new value has type `{}`", i, type_, new), 
+                                    span, 
+                                    src: self.src.clone(), 
+                                    path: self.path.clone(),
+                                    note: None,
+                                    help: None
+                                })
+                            } else {
+                                return Ok(())
+                            }
+                        } else {
+                            return Err(TypeError { 
+                                code: ECode::MutationError, 
+                                details: format!("cannot mutate immutable variable `{}`", i), 
+                                span, 
+                                src: self.src.clone(), 
+                                path: self.path.clone(),
+                                note: None,
+                                help: None
+                            })
+                        }
+                    }
+                }
+            }
+        }
+
+        for name in available_names {
+            let score = jaro_winkler(i, &name);
+            if score >= 0.7 && score > top_contender.1 {
+                top_contender = (Some(name.clone()), score)
+            }
+        }
+
+        Err(TypeError { 
+            code: ECode::UndefinedIdentifier, 
+            details: format!("cannot find `{}` in scope", i), 
+            span, 
+            src: self.src.clone(), 
+            path: self.path.clone(),
+            note: None,
+            help: if let Some(name) = top_contender.0 {
+                Some(format!("did you mean: `{}`?", name))
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn check(&mut self) -> Vec<TypeError> {
         let mut errors: Vec<TypeError> = Vec::new();
         for node in self.module.0.clone() {
@@ -240,7 +302,7 @@ impl TypeChecker {
             ASTNode::BinOp {
                 op, lhs, rhs
             } => {
-                let left = self.check_node(*lhs)?;
+                let left = self.check_node(*lhs.clone())?;
                 let right = self.check_node(*rhs)?;
                 match &*op.0 {
                     "+" | "-" | "*" | "/" | ">" | "<" | ">=" | "<=" => match (left.clone(), right.clone()) {
@@ -279,7 +341,7 @@ impl TypeChecker {
                         (Type::String, Type::String) => Ok(Type::String),
                         _ => Err(TypeError {
                             code: ECode::MismatchedTypes,
-                            details: format!("cannot do `{}` operation on types `{}`, `{}`", op.0, left, right),
+                            details: format!("cannot concatenate types `{}` and `{}`", left, right),
                             span: node.span,
                             src: self.src.clone(),
                             path: self.path.clone(),
@@ -287,6 +349,22 @@ impl TypeChecker {
                             help: None
                         })
                     },
+                    ":=" => {
+                        if let ASTNode::Identifier(s) = lhs.ast_repr {
+                            self.mutate_var(&s, node.span, right)?;
+                            Ok(Type::Unit)
+                        } else {
+                            Err(TypeError {
+                                code: ECode::MutationError,
+                                details: format!("can only mutate variables"),
+                                span: node.span,
+                                src: self.src.clone(),
+                                path: self.path.clone(),
+                                note: None,
+                                help: None
+                            })
+                        }
+                    }
                     _ => Err(TypeError {
                         code: ECode::MismatchedTypes,
                         details: format!("invalid operator - `{}`", op.0),
@@ -316,7 +394,7 @@ impl TypeChecker {
                         Type::UInt64 => Ok(Type::UInt64),
                         _ => Err(TypeError {
                             code: ECode::MismatchedTypes,
-                            details: format!("cannot do apply `{}` to type `{}`", op.0, operand_type),
+                            details: format!("cannot apply `+` to type `{}`", operand_type),
                             span: node.span,
                             src: self.src.clone(),
                             path: self.path.clone(),
@@ -334,7 +412,7 @@ impl TypeChecker {
                         Type::UInt8 | Type::UInt16 
                         | Type::UInt32 | Type::UInt64 => Err(TypeError {
                             code: ECode::MismatchedTypes,
-                            details: format!("cannot negate type `{}`", operand_type),
+                            details: format!("cannot negate unsigned integers"),
                             span: node.span,
                             src: self.src.clone(),
                             path: self.path.clone(),
@@ -363,17 +441,17 @@ impl TypeChecker {
                         Type::UInt64 => Ok(Type::UInt64),
                         _ => Err(TypeError {
                             code: ECode::MismatchedTypes,
-                            details: format!("cannot do apply `{}` to type `{}`", op.0, operand_type),
+                            details: format!("cannot apply `!` to type `{}`", operand_type),
                             span: node.span,
                             src: self.src.clone(),
                             path: self.path.clone(),
-                            note: Some("the `!` operator can be applied to `bool` and integer types".to_string()),
+                            note: Some("the `!` operator can be applied to `bool` and integer types as a bitwise NOT".to_string()),
                             help: None
                         })
                     },
                     _ => Err(TypeError {
                         code: ECode::MismatchedTypes,
-                        details: format!("invalid operator - `{}`", op.0),
+                        details: format!("invalid operator `{}`", op.0),
                         span: op.1,
                         src: self.src.clone(),
                         path: self.path.clone(),
@@ -403,7 +481,7 @@ impl TypeChecker {
                     if then_type != else_type {
                         return Err(TypeError {
                             code: ECode::MismatchedTypes,
-                            details: format!("`then` and `else` bodies have mismatched types: `{}`, `{}`", then_type, else_type),
+                            details: format!("`if` and `else` bodies have mismatched types: `{}`, `{}`", then_type, else_type),
                             span: node.span,
                             src: self.src.clone(),
                             path: self.path.clone(),
@@ -428,13 +506,24 @@ impl TypeChecker {
             ASTNode::Declaration {
                 type_, mutability, name
             } => {
+                if self.find_identifier(&name.0, node.span).is_ok() {
+                    return Err(TypeError {
+                        code: ECode::MismatchedTypes,
+                        details: format!("`{}` is already declared", name.0),
+                        span: name.1,
+                        src: self.src.clone(),
+                        path: self.path.clone(),
+                        note: None,
+                        help: None
+                    })
+                }
                 let scope = self.scopes.last_mut();
                 if let Some(s) = scope {
                     if let ParseType::Determined(t) = type_.0 {
                         if self.type_registry.is_registered(&name.0) {
                             return Err(TypeError {
                                 code: ECode::MismatchedTypes,
-                                details: format!("identifier `{}` is already registed as a type", name.0),
+                                details: format!("`{}` is already registed as a type", name.0),
                                 span: name.1,
                                 src: self.src.clone(),
                                 path: self.path.clone(),
@@ -447,7 +536,7 @@ impl TypeChecker {
                         } else {
                             return Err(TypeError {
                                 code: ECode::MismatchedTypes,
-                                details: format!("unregistered type - `{}`", t),
+                                details: format!("unregistered type `{}`", t),
                                 span: type_.1.unwrap(),
                                 src: self.src.clone(),
                                 path: self.path.clone(),
@@ -462,7 +551,7 @@ impl TypeChecker {
                         if self.type_registry.is_registered(&name.0) {
                             return Err(TypeError {
                                 code: ECode::MismatchedTypes,
-                                details: format!("identifier `{}` is already registed as a type", name.0),
+                                details: format!("`{}` is already registed as a type", name.0),
                                 span: name.1,
                                 src: self.src.clone(),
                                 path: self.path.clone(),
@@ -479,15 +568,27 @@ impl TypeChecker {
                 Ok(Type::Unit)
             },
             ASTNode::DeclarationWithValue {
-                type_, mutability, name, value: _
+                type_, mutability, name, value
             } => {
+                let value_type = self.check_node(*value)?;
+                if self.find_identifier(&name.0, node.span).is_ok() {
+                    return Err(TypeError {
+                        code: ECode::MismatchedTypes,
+                        details: format!("`{}` is already declared", name.0),
+                        span: name.1,
+                        src: self.src.clone(),
+                        path: self.path.clone(),
+                        note: None,
+                        help: None
+                    })
+                }
                 let scope = self.scopes.last_mut();
                 if let Some(s) = scope {
                     if let ParseType::Determined(t) = type_.0 {
                         if self.type_registry.is_registered(&name.0) {
                             return Err(TypeError {
                                 code: ECode::MismatchedTypes,
-                                details: format!("identifier `{}` is already registed as a type", name.0),
+                                details: format!("`{}` is already registed as a type", name.0),
                                 span: name.1,
                                 src: self.src.clone(),
                                 path: self.path.clone(),
@@ -500,7 +601,7 @@ impl TypeChecker {
                         } else {
                             return Err(TypeError {
                                 code: ECode::MismatchedTypes,
-                                details: format!("unregistered type - `{}`", t),
+                                details: format!("unregistered type `{}`", t),
                                 span: type_.1.unwrap(),
                                 src: self.src.clone(),
                                 path: self.path.clone(),
@@ -515,7 +616,7 @@ impl TypeChecker {
                         if self.type_registry.is_registered(&name.0) {
                             return Err(TypeError {
                                 code: ECode::MismatchedTypes,
-                                details: format!("identifier `{}` is already registed as a type", name.0),
+                                details: format!("`{}` is already registed as a type", name.0),
                                 span: name.1,
                                 src: self.src.clone(),
                                 path: self.path.clone(),
@@ -524,7 +625,7 @@ impl TypeChecker {
                             })
                         }
                         s.push(Symbol::Variable {
-                            name: name.0, type_: Type::Undetermined, mutability
+                            name: name.0, type_: value_type, mutability
                         })
                     }
                 }
@@ -541,7 +642,7 @@ impl TypeChecker {
             ASTNode::Statement(s) => {
                 self.check_node(*s)?;
                 Ok(Type::Unit)
-            }
+            },
         }
     }
 }

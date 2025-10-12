@@ -19,6 +19,7 @@ pub enum TokenType {
     RBrace,
 
     Semicolon,
+    ColonEquals,
     Colon
 }
 
@@ -27,12 +28,13 @@ impl TokenType {
         let str = self.to_string();
         match str {
             _ if str.is_empty() => match self {
-                TokenType::LParen => "'('".to_string(),
-                TokenType::RParen => "')'".to_string(),
-                TokenType::LBrace => "'{'".to_string(),
-                TokenType::RBrace => "'}'".to_string(),
-                TokenType::Semicolon => "';'".to_string(),
-                TokenType::Colon => "':'".to_string(),
+                TokenType::LParen => "`(`".to_string(),
+                TokenType::RParen => "`)`".to_string(),
+                TokenType::LBrace => "`{`".to_string(),
+                TokenType::RBrace => "`}`".to_string(),
+                TokenType::Semicolon => "`;`".to_string(),
+                TokenType::Colon => "`:`".to_string(),
+                TokenType::ColonEquals => "`:=`".to_string(),
                 _ => unreachable!()
             },
             _ => str
@@ -66,7 +68,7 @@ pub struct Token {
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}'{}'", self.token_type, self.lexeme)
+        write!(f, "{}`{}`", self.token_type, self.lexeme)
     }
 }
 
@@ -83,6 +85,7 @@ fn sel_token(lexeme: &String, span: &Span) -> Token {
             "}" => TokenType::RBrace,
             ";" => TokenType::Semicolon,
             ":" => TokenType::Colon,
+            ":=" => TokenType::ColonEquals,
             _ => if lexeme.parse::<i64>().is_ok() {
                 TokenType::Int
             } else if lexeme.parse::<f64>().is_ok() {
@@ -163,6 +166,75 @@ pub fn tokenize(source: &String) -> Vec<Token> {
                 let ch = chars[i];
         
                 match ch {
+                    _ if ch == '/' => {
+                        if !current.is_empty() {
+                            let span = Span { 
+                                line, 
+                                column: column - current.len(), 
+                                start_pos: start_pos, 
+                                end_pos: i - 1
+                            };
+                            tokens.push(sel_token(&current, &span));
+                            current.clear();
+                        } 
+                        if i + 1 < chars.len() {
+                            if chars[i + 1] == '/' {
+                                while i < chars.len() {
+                                    if chars[i] == '\n' { break }
+                                    column += 1;
+                                    i += 1;
+                                }
+                            } else if chars[i + 1] == '*' {
+                                while i < chars.len() {
+                                    column += 1;
+                                    if chars[i] == '\n' {
+                                        column = 0;
+                                        line += 1;
+                                    }
+                                    if i + 1 < chars.len() {
+                                        if format!("{}{}", chars[i], chars[i + 1]) == "*/" { i += 2; column += 2; break }
+                                    } else {
+                                        break
+                                    }
+                                    i += 1;
+                                }
+                            } else {
+                                let combined = format!("{}{}", ch, chars[i + 1]);
+                                if COMBINED_SYMBOLS.contains(&combined.as_str()) {
+                                    let span = Span { 
+                                        line, 
+                                        column, 
+                                        start_pos: i, 
+                                        end_pos: i + 2 
+                                    };
+                                    tokens.push(sel_token(&combined, &span));
+                                    column += 2;
+                                    i += 2;
+                                    continue;
+                                }
+
+                                let span = Span { 
+                                    line, 
+                                    column, 
+                                    start_pos: i, 
+                                    end_pos: i 
+                                };
+                                tokens.push(sel_token(&ch.to_string(), &span));
+                                column += 1;
+                                i += 1;
+                            }
+                        } else {
+                            let span = Span { 
+                                line, 
+                                column, 
+                                start_pos: i, 
+                                end_pos: i 
+                            };
+                            tokens.push(sel_token(&ch.to_string(), &span));
+                            column += 1;
+                            i += 1;
+                        }
+                    },
                     _ if " \t".contains(ch) => {
                         if !current.is_empty() {
                             let span = Span { 
@@ -192,6 +264,13 @@ pub fn tokenize(source: &String) -> Vec<Token> {
                         column = 0;
                         i += 1;
                     },
+                    '.' => {
+                        if !current.is_empty() && (current.parse::<i64>().is_ok() || chars[i + 1].is_ascii_digit()) {
+                            current.push(ch)
+                        }
+                        column += 1;
+                        i += 1;
+                    }
                     '0'..='9' => {
                         if current.is_empty() {
                             start_pos = i;

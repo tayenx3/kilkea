@@ -8,6 +8,7 @@ pub fn prec(op: &String) -> Option<(i32, i32)> {
         "==" | ">" | "<"
         | ">=" | "<=" | "!=" => Some((10, 11)),
         "++" => Some((40, 41)),
+        ":=" => Some((50, 51)),
         _ => None
     }
 }
@@ -30,6 +31,7 @@ pub enum ECode {
     UndefinedIdentifier, // E1003
 
     MismatchedTypes, // E1004
+    MutationError, // E1005
 }
 
 pub const ERR_MAP: Lazy<HashMap<ECode, String>> = Lazy::new(|| {
@@ -38,7 +40,8 @@ pub const ERR_MAP: Lazy<HashMap<ECode, String>> = Lazy::new(|| {
         (ECode::UnexpectedToken, "E1001".to_string()),
         (ECode::ExpectedToken, "E1002".to_string()),
         (ECode::UndefinedIdentifier, "E1003".to_string()),
-        (ECode::MismatchedTypes, "E1004".to_string())
+        (ECode::MismatchedTypes, "E1004".to_string()),
+        (ECode::MutationError, "E1005".to_string())
     ]
     .into_iter()
     .collect::<HashMap<ECode, String>>()
@@ -50,7 +53,7 @@ impl fmt::Display for ECode {
     }
 }
 
-pub const COMBINED_SYMBOLS: &[&str] = &["==", ">=", "<=", "++"];
+pub const COMBINED_SYMBOLS: &[&str] = &["==", ">=", "<=", "++", ":="];
 pub const KEYWORDS: &[&str] = &["if", "else", "mut", "struct", "enum", "func"];
 
 #[derive(Debug, Clone, PartialEq)]

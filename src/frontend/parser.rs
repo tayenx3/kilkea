@@ -3,7 +3,7 @@ use std::fmt;
 use colored::Colorize;
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParseError {
     pub code: ECode,
     pub details: String,
@@ -34,8 +34,9 @@ impl fmt::Display for ParseError {
         if let Some(note) = &self.note {
             output.push_str(
                 &format!(
-                    " {:width$} = note: {}\n", 
+                    "\n {:width$} = {}: {}", 
                     "", 
+                    "note".cyan(),
                     note, 
                     width = self.calculate_max_digits(
                         self.span.line + SPREAD
@@ -46,8 +47,9 @@ impl fmt::Display for ParseError {
         if let Some(help) = &self.help {
             output.push_str(
                 &format!(
-                    " {:width$} = help: {}\n", 
+                    "\n {:width$} = {}: {}", 
                     "", 
+                    "help".cyan(),
                     help, 
                     width = self.calculate_max_digits(
                         self.span.line + SPREAD
@@ -87,29 +89,24 @@ impl ParseError {
         
         // Main line
         result.push_str(&format!(
-            " {:width$} | {}\n",
-            line + 1,
+            " {:width$} {} {}\n",
+            (line + 1).to_string().cyan().bold(),
+            "|".cyan().bold(),
             lines[line],
             width = digits
         ));
         result.push_str(&format!(
-            " {:width$} | {}{}",
+            " {:width$} {} {}{} {}",
             "",
+            "|".cyan().bold(),
             " ".repeat(self.span.column),
             "^".repeat(self.span.end_pos + 1 - self.span.start_pos).red().bold(),
+            self.details.red().bold(),
             width = digits
         ));
         
         // Next lines
         result.push_str(&self.format_context_lines(line, spread, true, &lines, digits));
-        
-        // Error indicator
-        result.push_str(&format!(
-            "\n {:width$} | {}",
-            ">".repeat(digits).red().bold(),
-            self.details.red().bold(),
-            width = digits
-        ));
         
         result
     }
@@ -140,9 +137,9 @@ impl ParseError {
             if let Some(line_num) = target_line {
                 if line_num < lines.len() {
                     let line_content = if is_after {
-                        format!("\n {:width$} | {}", line_num + 1, lines[line_num], width = digits)
+                        format!("\n {:width$} {} {}", (line_num + 1).to_string().cyan().bold(), "|".cyan().bold(), lines[line_num], width = digits)
                     } else {
-                        format!(" {:width$} | {}\n", line_num + 1, lines[line_num], width = digits)
+                        format!(" {:width$} {} {}\n", (line_num + 1).to_string().cyan().bold(), "|".cyan().bold(), lines[line_num], width = digits)
                     };
                     context.push_str(&line_content);
                 }
@@ -278,14 +275,18 @@ impl Parser {
             })
         };
 
-        let mut lhs = self.nud()?;
+        let mut l = self.nud()?;
 
         while let Some(current_token) = self.get(0).cloned() {
             let ((lbp, rbp), op, s) = {
-                if let TokenType::Operator = current_token.token_type {
+                if let TokenType::ColonEquals = current_token.token_type {
                     (prec(&current_token.lexeme).unwrap(), current_token.lexeme.clone(), current_token.span)
                 } else {
-                    break
+                    if let TokenType::Operator = current_token.token_type {
+                        (prec(&current_token.lexeme).unwrap(), current_token.lexeme.clone(), current_token.span)
+                    } else {
+                        break
+                    }
                 }
             };
             if lbp < min_bp {
@@ -293,18 +294,24 @@ impl Parser {
             }
 
             self.pos += 1;
-            let rhs = self.parse_expression(rbp)?;
-            lhs = Node { 
+            let r = self.parse_expression(rbp)?;
+            let built_span = Span {
+                start_pos: span.start_pos,
+                end_pos: r.span.end_pos,
+                line: span.line,
+                column: span.column
+            };
+            l = Node { 
                 ast_repr: ASTNode::BinOp {
-                    lhs: Box::new(lhs),
-                    rhs: Box::new(rhs),
+                    lhs: Box::new(l),
+                    rhs: Box::new(r),
                     op: (op, s)
                 },
-                span: span
+                span: built_span
             };
         }
 
-        Ok(lhs)
+        Ok(l)
     }
 
     
@@ -346,11 +353,17 @@ impl Parser {
                 TokenType::Operator => {
                     self.pos += 1;
                     let operand = self.nud()?;
+                    let built_span = Span {
+                        start_pos: current_token.span.start_pos,
+                        end_pos: operand.span.end_pos,
+                        line: current_token.span.line,
+                        column: current_token.span.column
+                    };
                     let un = ASTNode::UnaOp { 
                         operand: Box::new(operand), 
                         op: (current_token.lexeme, current_token.span)
                     };
-                    Ok( Node{ ast_repr: un, span: current_token.span } )
+                    Ok( Node { ast_repr: un, span: built_span } )
                 },
                 TokenType::Keyword => {
                     match &*value {
@@ -360,14 +373,14 @@ impl Parser {
                         },
                         _ => return Err(ParseError {
                             code: ECode::UnexpectedToken,
-                            details: format!("invalid keyword - `{}`", value),
+                            details: format!("invalid keyword `{}`", value),
                             span: current_token.span,
                             src: self.src.clone(),
                             path: self.path.clone(),
                             note: None,
                             help: if value == "else" {
                                 Some("add a `if` clause before the `else` clause".to_string())
-                            } else { None}
+                            } else { None }
                         })
                     }
                 },
@@ -377,7 +390,7 @@ impl Parser {
                 },
                 _ => Err(ParseError {
                     code: ECode::UnexpectedToken,
-                    details: format!("unexpected token - {}", current_token),
+                    details: format!("unexpected token {}", current_token),
                     span: self.eof(),
                     src: self.src.clone(),
                     path: self.path.clone(),
@@ -401,7 +414,7 @@ impl Parser {
     
     fn parse_if(&mut self) -> Result<Node, ParseError> {        
         self.pos += 1;
-        let if_span = if let Some(current_token) = self.get(0).cloned() {
+        let p_if_span = if let Some(current_token) = self.get(0).cloned() {
             current_token.span
         } else {
             return Err(ParseError {
@@ -418,6 +431,13 @@ impl Parser {
         let condition = self.parse_expression(0)?;
         let then_body = self.parse_expression(0)?;
         let else_body = self.parse_else()?;
+
+        let if_span = Span {
+            start_pos: p_if_span.start_pos,
+            line: p_if_span.start_pos,
+            column: p_if_span.column,
+            end_pos: condition.span.end_pos
+        };
         
         Ok(Node {
             ast_repr: ASTNode::If {
@@ -535,19 +555,38 @@ impl Parser {
                         return Ok(r)
                     }
                 }
+            } else if let Some(Token { token_type: TokenType::Operator, .. }) = self.get(0).cloned() {
+                self.pos -= 1;
+                let mut r = self.parse_expression(0)?;
+                if let Some(Token { token_type, .. }) = self.get(0) {
+                    if *token_type == TokenType::Semicolon {
+                        r = Node { ast_repr: ASTNode::Statement(Box::new(r.clone())), span: r.span };
+                        self.pos += 1;
+                    }
+                }
+                return Ok(r)
+            } else if let Some(Token { token_type: TokenType::ColonEquals, .. }) = self.get(0).cloned() {
+                self.pos -= 1;
+                let mut r = self.parse_expression(0)?;
+                if let Some(Token { token_type, .. }) = self.get(0) {
+                    if *token_type == TokenType::Semicolon {
+                        r = Node { ast_repr: ASTNode::Statement(Box::new(r.clone())), span: r.span };
+                        self.pos += 1;
+                    }
+                }
+                return Ok(r)
             }
             return Ok(v)
-        } else {
-            let mut r = self.parse_expression(0)?;
-            if let Some(Token { token_type, .. }) = self.get(0) {
-                if *token_type == TokenType::Semicolon {
-                    r = Node { ast_repr: ASTNode::Statement(Box::new(r.clone())), span: r.span };
-                    self.pos += 1;
-                }
-            }
-
-            Ok(r)
         }
+        let mut r = self.parse_expression(0)?;
+        if let Some(Token { token_type, .. }) = self.get(0) {
+            if *token_type == TokenType::Semicolon {
+                r = Node { ast_repr: ASTNode::Statement(Box::new(r.clone())), span: r.span };
+                self.pos += 1;
+            }
+        }
+
+        Ok(r)
     }
 
     

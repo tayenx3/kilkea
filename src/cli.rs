@@ -15,5 +15,8 @@ pub struct Cli {
     pub output: Option<String>,
 
     #[arg(short, long)]
-    pub debug: bool
+    pub debug: bool,
+
+    #[arg(short, long)]
+    pub parse_only: bool
 }
