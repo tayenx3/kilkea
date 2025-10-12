@@ -2,7 +2,6 @@ use super::*;
 use std::fmt;
 use colored::Colorize;
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseError {
     pub code: ECode,
@@ -26,18 +25,31 @@ impl fmt::Display for ParseError {
         // Location line
         let location_info = self.format_location(SPREAD);
         output.push_str(&location_info);
+        output.push_str(&format!(" {:width$} {}\n",
+            "",
+            "│".cyan(),
+            width = self.calculate_max_digits(
+                        self.span.line + SPREAD
+        )));
         
         // Error details
         let error_line = self.format_error_line(SPREAD);
         output.push_str(&error_line);
+        output.push_str(&format!("\n {:width$} {}",
+            "",
+            "│".cyan(),
+            width = self.calculate_max_digits(
+                        self.span.line + SPREAD
+        )));
 
         if let Some(note) = &self.note {
             output.push_str(
                 &format!(
-                    "\n {:width$} = {}: {}", 
+                    "\n {:width$} {} {}: {}", 
                     "", 
-                    "note".cyan(),
-                    note, 
+                    "=".cyan().bold(),
+                    "note".bold(),
+                    note.bold(), 
                     width = self.calculate_max_digits(
                         self.span.line + SPREAD
                     )
@@ -47,13 +59,13 @@ impl fmt::Display for ParseError {
         if let Some(help) = &self.help {
             output.push_str(
                 &format!(
-                    "\n {:width$} = {}: {}", 
-                    "", 
-                    "help".cyan(),
-                    help, 
+                    "\n {:width$} {}: {}", 
+                    "",
+                    "hint".cyan().bold(), 
+                    help.bold(),
                     width = self.calculate_max_digits(
                         self.span.line + SPREAD
-                    )
+                    ) / 2
                 )
             )
         }
@@ -68,11 +80,13 @@ impl ParseError {
         let digits = self.calculate_max_digits(line + spread);
         
         format!(
-            "{:width$}> {}:{}:{}\n",
-            "-".repeat(digits + 2),
+            "{:width$}{} {}:{}:{} - {}\n",
+            "",
+            "┌─".cyan().bold(),
             self.path,
             line + 1,
             self.span.column,
+            self.details.red().bold(),
             width = digits + 2
         )
     }
@@ -91,16 +105,16 @@ impl ParseError {
         result.push_str(&format!(
             " {:width$} {} {}\n",
             (line + 1).to_string().cyan().bold(),
-            "|".cyan().bold(),
+            "│".cyan(),
             lines[line],
             width = digits
         ));
         result.push_str(&format!(
             " {:width$} {} {}{} {}",
             "",
-            "|".cyan().bold(),
+            "│".cyan(),
             " ".repeat(self.span.column),
-            "^".repeat(self.span.end_pos + 1 - self.span.start_pos).red().bold(),
+            "¯".repeat(self.span.end_pos + 1 - self.span.start_pos).red().bold(),
             self.details.red().bold(),
             width = digits
         ));
@@ -137,9 +151,9 @@ impl ParseError {
             if let Some(line_num) = target_line {
                 if line_num < lines.len() {
                     let line_content = if is_after {
-                        format!("\n {:width$} {} {}", (line_num + 1).to_string().cyan().bold(), "|".cyan().bold(), lines[line_num], width = digits)
+                        format!("\n {:width$} {} {}", (line_num + 1).to_string().cyan().bold(), "│".cyan(), lines[line_num], width = digits)
                     } else {
-                        format!(" {:width$} {} {}\n", (line_num + 1).to_string().cyan().bold(), "|".cyan().bold(), lines[line_num], width = digits)
+                        format!(" {:width$} {} {}\n", (line_num + 1).to_string().cyan().bold(), "│".cyan(), lines[line_num], width = digits)
                     };
                     context.push_str(&line_content);
                 }
