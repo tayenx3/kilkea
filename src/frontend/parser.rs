@@ -3,7 +3,7 @@ use std::fmt;
 use colored::Colorize;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ParseError {
+pub struct Error {
     pub code: ECode,
     pub details: String,
     pub span: Span,
@@ -13,8 +13,14 @@ pub struct ParseError {
     pub help: Option<String>
 }
 
-impl fmt::Display for ParseError {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.format())
+    }
+}
+
+impl Error {
+    fn format(&self) -> String {
         const SPREAD: usize = 2;
         
         let mut output = String::new();
@@ -70,11 +76,9 @@ impl fmt::Display for ParseError {
             )
         }
         
-        write!(f, "{}", output)
+        output
     }
-}
 
-impl ParseError {
     fn format_location(&self, spread: usize) -> String {
         let line = self.span.line;
         let digits = self.calculate_max_digits(line + spread);
@@ -253,9 +257,9 @@ impl Parser {
     }
 
     
-    pub fn parse_program(&mut self) -> (Module, Vec<ParseError>) {
+    pub fn parse_program(&mut self) -> (Module, Vec<Error>) {
         let mut stmts: Vec<Node> = Vec::new();
-        let mut errors: Vec<ParseError> = Vec::new();
+        let mut errors: Vec<Error> = Vec::new();
 
         while self.get(0).cloned().is_some() {
             let start_pos = self.pos;
@@ -274,11 +278,11 @@ impl Parser {
     }
 
     
-    pub fn parse_expression(&mut self, min_bp: i32) -> Result<Node, ParseError> {
+    pub fn parse_expression(&mut self, min_bp: i32) -> Result<Node, Error> {
         let span = if let Some(current_token) = self.get(0).cloned() {
             current_token.span
         } else {
-            return Err(ParseError {
+            return Err(Error {
                 code: ECode::UnexpectedEOF,
                 details: String::from("unexpected end of input"),
                 span: self.eof(),
@@ -329,7 +333,7 @@ impl Parser {
     }
 
     
-    pub fn nud(&mut self) -> Result<Node, ParseError> {
+    pub fn nud(&mut self) -> Result<Node, Error> {
         if let Some(current_token) = self.get(0).cloned() {
             let value = current_token.lexeme.clone();
             match current_token.token_type {
@@ -385,7 +389,7 @@ impl Parser {
                             let i = self.parse_if()?;
                             Ok(i)
                         },
-                        _ => return Err(ParseError {
+                        _ => return Err(Error {
                             code: ECode::UnexpectedToken,
                             details: format!("invalid keyword `{}`", value),
                             span: current_token.span,
@@ -402,7 +406,7 @@ impl Parser {
                     let i = self.parse_block()?;
                     Ok(i)
                 },
-                _ => Err(ParseError {
+                _ => Err(Error {
                     code: ECode::UnexpectedToken,
                     details: format!("unexpected token {}", current_token),
                     span: self.eof(),
@@ -413,7 +417,7 @@ impl Parser {
                 })
             }
         } else {
-            Err(ParseError {
+            Err(Error {
                 code: ECode::UnexpectedEOF,
                 details: String::from("unexpected end of input, expected expression"),
                 span: self.eof(),
@@ -426,12 +430,12 @@ impl Parser {
     }
 
     
-    fn parse_if(&mut self) -> Result<Node, ParseError> {        
+    fn parse_if(&mut self) -> Result<Node, Error> {        
         self.pos += 1;
         let p_if_span = if let Some(current_token) = self.get(0).cloned() {
             current_token.span
         } else {
-            return Err(ParseError {
+            return Err(Error {
                 code: ECode::UnexpectedEOF,
                 details: String::from("expected expression, unexpected end of input"),
                 span: self.eof(),
@@ -464,7 +468,7 @@ impl Parser {
     }
 
     
-    fn parse_else(&mut self) -> Result<Node, ParseError> {
+    fn parse_else(&mut self) -> Result<Node, Error> {
         if let Some(current_token) = self.get(0) {
             if let TokenType::Keyword = current_token.token_type {
                 if current_token.lexeme == "else" {
@@ -476,7 +480,7 @@ impl Parser {
                         } else {
                             let span = match self.get(0).cloned() {
                                 Some(o) => o.span.clone(),
-                                None => return Err(ParseError {
+                                None => return Err(Error {
                                     code: ECode::UnexpectedEOF,
                                     details: String::from("expected expression, enexpected end of input"),
                                     span: self.eof(),
@@ -490,7 +494,7 @@ impl Parser {
                             Ok(Node { ast_repr: ASTNode::Block(vec![stmt]), span })
                         }
                     } else {
-                        Err(ParseError {
+                        Err(Error {
                             code: ECode::UnexpectedEOF,
                             details: String::from("epected else body after `else`"),
                             span: self.eof(),
@@ -512,7 +516,7 @@ impl Parser {
     }
 
     
-    fn parse_block(&mut self) -> Result<Node, ParseError> {
+    fn parse_block(&mut self) -> Result<Node, Error> {
         self.pos += 1;
         let mut block: Vec<Node> = Vec::new();
         let mut span = self.eof();
@@ -541,7 +545,7 @@ impl Parser {
         Ok(Node { ast_repr: ASTNode::Block(block), span })
     }
 
-    fn parse_statement(&mut self) -> Result<Node, ParseError> {
+    fn parse_statement(&mut self) -> Result<Node, Error> {
         let mut var_decl_parser = VariableDeclParser::new(&self);
         if let Ok(v) = var_decl_parser.try_parse() {
             self.pos = var_decl_parser.pos;
@@ -614,13 +618,13 @@ impl Parser {
     }
 
     
-    fn expect_and_take(&mut self, expected: &TokenType) -> Result<Token, ParseError> {
+    fn expect_and_take(&mut self, expected: &TokenType) -> Result<Token, Error> {
         if let Some(current_token) = self.get(0).cloned() {
             if &current_token.token_type == expected {
                 self.pos += 1;
                 Ok(current_token)
             } else {
-                Err(ParseError {
+                Err(Error {
                     code: ECode::ExpectedToken,
                     details: format!("expected {}, found {}", expected.to_error_repr(), current_token),
                     span: current_token.span,
@@ -631,7 +635,7 @@ impl Parser {
                 })
             }
         } else {
-            Err(ParseError {
+            Err(Error {
                 code: ECode::UnexpectedEOF,
                 details: format!("unexpected end of input, expected {}", expected.to_error_repr()),
                 span: self.eof(),
@@ -644,13 +648,13 @@ impl Parser {
     }
 
     
-    fn expect(&mut self, expected: &TokenType) -> Result<(), ParseError> {
+    fn expect(&mut self, expected: &TokenType) -> Result<(), Error> {
         if let Some(current_token) = self.get(0).cloned() {
             if &current_token.token_type == expected {
                 self.pos += 1;
                 Ok(())
             } else {
-                Err(ParseError {
+                Err(Error {
                     code: ECode::ExpectedToken,
                     details: format!("expected {} found {}", expected.to_error_repr(), current_token),
                     span: current_token.span,
@@ -661,7 +665,7 @@ impl Parser {
                 })
             }
         } else {
-            Err(ParseError {
+            Err(Error {
                 code: ECode::UnexpectedEOF,
                 details: format!("unexpected end of input, expected {}", expected.to_error_repr()),
                 span: self.eof(),

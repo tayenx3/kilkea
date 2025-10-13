@@ -1,177 +1,7 @@
-use std::{collections::HashMap, fmt};
-use colored::Colorize;
+use std::collections::HashMap;
 use strsim::jaro_winkler;
 use super::*;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TypeError {
-    pub code: ECode,
-    pub details: String,
-    pub span: Span,
-    pub src: String,
-    pub path: String,
-    pub note: Option<String>,
-    pub help: Option<String>
-}
-
-impl fmt::Display for TypeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const SPREAD: usize = 2;
-        
-        let mut output = String::new();
-        
-        // Header
-        output.push_str(&format!("{}", format!("error[{}]:\n", self.code).red().bold()));
-        
-        // Location line
-        let location_info = self.format_location(SPREAD);
-        output.push_str(&location_info);
-        output.push_str(&format!(" {:width$} {}\n",
-            "",
-            "│".cyan(),
-            width = self.calculate_max_digits(
-                        self.span.line + SPREAD
-        )));
-        
-        // Error details
-        let error_line = self.format_error_line(SPREAD);
-        output.push_str(&error_line);
-        output.push_str(&format!("\n {:width$} {}",
-            "",
-            "│".cyan(),
-            width = self.calculate_max_digits(
-                        self.span.line + SPREAD
-        )));
-
-        if let Some(note) = &self.note {
-            output.push_str(
-                &format!(
-                    "\n {:width$} {} {}: {}", 
-                    "", 
-                    "=".cyan().bold(),
-                    "note".bold(),
-                    note.bold(), 
-                    width = self.calculate_max_digits(
-                        self.span.line + SPREAD
-                    )
-                )
-            )
-        }
-        if let Some(help) = &self.help {
-            output.push_str(
-                &format!(
-                    "\n {:width$} {}: {}", 
-                    "",
-                    "hint".cyan().bold(), 
-                    help.bold(),
-                    width = self.calculate_max_digits(
-                        self.span.line + SPREAD
-                    ) / 2
-                )
-            )
-        }
-        
-        write!(f, "{}", output)
-    }
-}
-
-impl TypeError {
-    fn format_location(&self, spread: usize) -> String {
-        let line = self.span.line;
-        let digits = self.calculate_max_digits(line + spread);
-        
-        format!(
-            "{:width$}{} {}:{}:{} - {}\n",
-            "",
-            "┌─".cyan().bold(),
-            self.path,
-            line + 1,
-            self.span.column,
-            self.details.red().bold(),
-            width = digits + 2
-        )
-    }
-    
-    fn format_error_line(&self, spread: usize) -> String {
-        let line = self.span.line;
-        let lines: Vec<&str> = self.src.split('\n').collect();
-        let digits = self.calculate_max_digits(line + spread);
-        
-        let mut result = String::new();
-        
-        // Previous lines
-        result.push_str(&self.format_context_lines(line, spread, false, &lines, digits));
-        
-        // Main line
-        result.push_str(&format!(
-            " {:width$} {} {}\n",
-            (line + 1).to_string().cyan().bold(),
-            "│".cyan(),
-            lines[line],
-            width = digits
-        ));
-        result.push_str(&format!(
-            " {:width$} {} {}{} {}",
-            "",
-            "│".cyan(),
-            " ".repeat(self.span.column),
-            "¯".repeat(self.span.end_pos + 1 - self.span.start_pos).red().bold(),
-            self.details.red().bold(),
-            width = digits
-        ));
-        
-        // Next lines
-        result.push_str(&self.format_context_lines(line, spread, true, &lines, digits));
-        
-        result
-    }
-    
-    fn format_context_lines(
-        &self,
-        current_line: usize,
-        spread: usize,
-        is_after: bool,
-        lines: &[&str],
-        digits: usize,
-    ) -> String {
-        let mut context = String::new();
-        
-        let range = if is_after {
-            (1..=spread).collect::<Vec<_>>()
-        } else {
-            (1..=spread).rev().collect::<Vec<_>>()
-        };
-        
-        for i in range {
-            let target_line = if is_after {
-                current_line.checked_add(i)
-            } else {
-                current_line.checked_sub(i)
-            };
-            
-            if let Some(line_num) = target_line {
-                if line_num < lines.len() {
-                    let line_content = if is_after {
-                        format!("\n {:width$} {} {}", (line_num + 1).to_string().cyan().bold(), "│".cyan(), lines[line_num], width = digits)
-                    } else {
-                        format!(" {:width$} {} {}\n", (line_num + 1).to_string().cyan().bold(), "│".cyan(), lines[line_num], width = digits)
-                    };
-                    context.push_str(&line_content);
-                }
-            }
-        }
-        
-        context
-    }
-    
-    fn calculate_max_digits(&self, max_line_num: usize) -> usize {
-        if max_line_num == 0 {
-            1
-        } else {
-            max_line_num.ilog10() as usize + 1
-        }
-    }
-}
+use super::Error;
 
 pub struct TypeChecker {
     module: Module,
@@ -193,7 +23,7 @@ impl TypeChecker {
     }
 
     #[allow(irrefutable_let_patterns)]
-    pub fn find_identifier(&self, i: &String, span: Span) -> Result<Type, TypeError> {
+    pub fn find_identifier(&self, i: &String, span: Span) -> Result<Type, Error> {
         let mut reversed_scopes = self.scopes.clone();
         reversed_scopes.reverse();
 
@@ -216,7 +46,7 @@ impl TypeChecker {
             }
         }
 
-        Err(TypeError { 
+        Err(Error { 
             code: ECode::UndefinedIdentifier, 
             details: format!("cannot find `{}` in scope", i), 
             span, 
@@ -232,7 +62,7 @@ impl TypeChecker {
     }
 
     #[allow(irrefutable_let_patterns)]
-    pub fn mutate_var(&mut self, i: &String, span: Span, new: Type) -> Result<(), TypeError> {
+    pub fn mutate_var(&mut self, i: &String, span: Span, new: Type) -> Result<(), Error> {
         let mut reversed_scopes = self.scopes.clone();
         reversed_scopes.reverse();
 
@@ -246,7 +76,7 @@ impl TypeChecker {
                     if name == i {
                         if *mutability {
                             if *type_ != new {
-                                return Err(TypeError { 
+                                return Err(Error { 
                                     code: ECode::MutationError, 
                                     details: format!("`{}` has type `{}` but the new value has type `{}`", i, type_, new), 
                                     span, 
@@ -259,7 +89,7 @@ impl TypeChecker {
                                 return Ok(())
                             }
                         } else {
-                            return Err(TypeError { 
+                            return Err(Error { 
                                 code: ECode::MutationError, 
                                 details: format!("cannot mutate immutable variable `{}`", i), 
                                 span, 
@@ -281,7 +111,7 @@ impl TypeChecker {
             }
         }
 
-        Err(TypeError { 
+        Err(Error { 
             code: ECode::UndefinedIdentifier, 
             details: format!("cannot find `{}` in scope", i), 
             span, 
@@ -296,8 +126,8 @@ impl TypeChecker {
         })
     }
 
-    pub fn check(&mut self) -> Vec<TypeError> {
-        let mut errors: Vec<TypeError> = Vec::new();
+    pub fn check(&mut self) -> Vec<Error> {
+        let mut errors: Vec<Error> = Vec::new();
         for node in self.module.0.clone() {
             let result = self.check_node(node.clone());
             if let Err(s) = result{
@@ -307,7 +137,7 @@ impl TypeChecker {
         errors
     }
 
-    pub fn check_node(&mut self, node: Node) -> Result<Type, TypeError> {
+    pub fn check_node(&mut self, node: Node) -> Result<Type, Error> {
         match node.ast_repr {
             ASTNode::IntLit(_) => Ok(Type::Int32),
             ASTNode::FloatLit(_) => Ok(Type::Float64),
@@ -331,7 +161,7 @@ impl TypeChecker {
                         (Type::UInt16, Type::UInt16) => Ok(Type::UInt16),
                         (Type::UInt32, Type::UInt32) => Ok(Type::UInt32),
                         (Type::UInt64, Type::UInt64) => Ok(Type::UInt64),
-                        _ => Err(TypeError {
+                        _ => Err(Error {
                             code: ECode::MismatchedTypes,
                             details: format!("cannot do `{}` operation on types `{}`, `{}`", op.0, left, right),
                             span: node.span,
@@ -342,7 +172,7 @@ impl TypeChecker {
                         })
                     },
                     "==" | "!=" => if left == right { Ok(left) } else {
-                        Err(TypeError {
+                        Err(Error {
                             code: ECode::MismatchedTypes,
                             details: format!("cannot do `{}` operation on types `{}`, `{}`", op.0, left, right),
                             span: node.span,
@@ -354,7 +184,7 @@ impl TypeChecker {
                     },
                     "++" => match (left.clone(), right.clone()) {
                         (Type::String, Type::String) => Ok(Type::String),
-                        _ => Err(TypeError {
+                        _ => Err(Error {
                             code: ECode::MismatchedTypes,
                             details: format!("cannot concatenate types `{}` and `{}`", left, right),
                             span: node.span,
@@ -369,7 +199,7 @@ impl TypeChecker {
                             self.mutate_var(&s, node.span, right)?;
                             Ok(Type::Unit)
                         } else {
-                            Err(TypeError {
+                            Err(Error {
                                 code: ECode::MutationError,
                                 details: format!("can only mutate variables"),
                                 span: node.span,
@@ -380,7 +210,7 @@ impl TypeChecker {
                             })
                         }
                     }
-                    _ => Err(TypeError {
+                    _ => Err(Error {
                         code: ECode::MismatchedTypes,
                         details: format!("invalid operator - `{}`", op.0),
                         span: op.1,
@@ -407,7 +237,7 @@ impl TypeChecker {
                         Type::UInt16 => Ok(Type::UInt16),
                         Type::UInt32 => Ok(Type::UInt32),
                         Type::UInt64 => Ok(Type::UInt64),
-                        _ => Err(TypeError {
+                        _ => Err(Error {
                             code: ECode::MismatchedTypes,
                             details: format!("cannot apply `+` to type `{}`", operand_type),
                             span: node.span,
@@ -425,7 +255,7 @@ impl TypeChecker {
                         Type::Float32 => Ok(Type::Float32),
                         Type::Float64 => Ok(Type::Float64),
                         Type::UInt8 | Type::UInt16 
-                        | Type::UInt32 | Type::UInt64 => Err(TypeError {
+                        | Type::UInt32 | Type::UInt64 => Err(Error {
                             code: ECode::MismatchedTypes,
                             details: format!("cannot negate unsigned integers"),
                             span: node.span,
@@ -434,7 +264,7 @@ impl TypeChecker {
                             note: None,
                             help: None
                         }),
-                        _ => Err(TypeError {
+                        _ => Err(Error {
                             code: ECode::MismatchedTypes,
                             details: format!("cannot negate type `{}`", operand_type),
                             span: node.span,
@@ -454,7 +284,7 @@ impl TypeChecker {
                         Type::UInt16 => Ok(Type::UInt16),
                         Type::UInt32 => Ok(Type::UInt32),
                         Type::UInt64 => Ok(Type::UInt64),
-                        _ => Err(TypeError {
+                        _ => Err(Error {
                             code: ECode::MismatchedTypes,
                             details: format!("cannot apply `!` to type `{}`", operand_type),
                             span: node.span,
@@ -464,7 +294,7 @@ impl TypeChecker {
                             help: None
                         })
                     },
-                    _ => Err(TypeError {
+                    _ => Err(Error {
                         code: ECode::MismatchedTypes,
                         details: format!("invalid operator `{}`", op.0),
                         span: op.1,
@@ -494,7 +324,7 @@ impl TypeChecker {
                         }
                     }
                     if then_type != else_type {
-                        return Err(TypeError {
+                        return Err(Error {
                             code: ECode::MismatchedTypes,
                             details: format!("`if` and `else` bodies have mismatched types: `{}`, `{}`", then_type, else_type),
                             span: node.span,
@@ -507,7 +337,7 @@ impl TypeChecker {
                         Ok(then_type)
                     }
                 } else {
-                    Err(TypeError {
+                    Err(Error {
                         code: ECode::MismatchedTypes,
                         details: format!("expected `bool`, found `{}`", condition_type),
                         span: node.span,
@@ -522,7 +352,7 @@ impl TypeChecker {
                 type_, mutability, name
             } => {
                 if self.find_identifier(&name.0, node.span).is_ok() {
-                    return Err(TypeError {
+                    return Err(Error {
                         code: ECode::MismatchedTypes,
                         details: format!("`{}` is already declared", name.0),
                         span: name.1,
@@ -536,7 +366,7 @@ impl TypeChecker {
                 if let Some(s) = scope {
                     if let ParseType::Determined(t) = type_.0 {
                         if self.type_registry.is_registered(&name.0) {
-                            return Err(TypeError {
+                            return Err(Error {
                                 code: ECode::MismatchedTypes,
                                 details: format!("`{}` is already registed as a type", name.0),
                                 span: name.1,
@@ -549,7 +379,7 @@ impl TypeChecker {
                         let t = if let Some(type_) = self.type_registry.get(&t) {
                             type_
                         } else {
-                            return Err(TypeError {
+                            return Err(Error {
                                 code: ECode::MismatchedTypes,
                                 details: format!("unregistered type `{}`", t),
                                 span: type_.1.unwrap(),
@@ -564,7 +394,7 @@ impl TypeChecker {
                         }, ());
                     } else {
                         if self.type_registry.is_registered(&name.0) {
-                            return Err(TypeError {
+                            return Err(Error {
                                 code: ECode::MismatchedTypes,
                                 details: format!("`{}` is already registed as a type", name.0),
                                 span: name.1,
@@ -587,7 +417,7 @@ impl TypeChecker {
             } => {
                 let value_type = self.check_node(*value)?;
                 if self.find_identifier(&name.0, node.span).is_ok() {
-                    return Err(TypeError {
+                    return Err(Error {
                         code: ECode::MismatchedTypes,
                         details: format!("`{}` is already declared", name.0),
                         span: name.1,
@@ -601,7 +431,7 @@ impl TypeChecker {
                 if let Some(s) = scope {
                     if let ParseType::Determined(t) = type_.0 {
                         if self.type_registry.is_registered(&name.0) {
-                            return Err(TypeError {
+                            return Err(Error {
                                 code: ECode::MismatchedTypes,
                                 details: format!("`{}` is already registed as a type", name.0),
                                 span: name.1,
@@ -614,7 +444,7 @@ impl TypeChecker {
                         let t = if let Some(type_) = self.type_registry.get(&t) {
                             type_
                         } else {
-                            return Err(TypeError {
+                            return Err(Error {
                                 code: ECode::MismatchedTypes,
                                 details: format!("unregistered type `{}`", t),
                                 span: type_.1.unwrap(),
@@ -629,7 +459,7 @@ impl TypeChecker {
                         }, ());
                     } else {
                         if self.type_registry.is_registered(&name.0) {
-                            return Err(TypeError {
+                            return Err(Error {
                                 code: ECode::MismatchedTypes,
                                 details: format!("`{}` is already registed as a type", name.0),
                                 span: name.1,
