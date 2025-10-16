@@ -10,13 +10,13 @@ pub enum TokenType {
     Bool,
     Identifier,
     Keyword,
-    Equals,
     
     Operator,
     LParen,
     RParen,
     LBrace,
     RBrace,
+    Equals,
 
     Semicolon,
     ColonEquals,
@@ -35,6 +35,7 @@ impl TokenType {
                 TokenType::Semicolon => "`;`".to_string(),
                 TokenType::Colon => "`:`".to_string(),
                 TokenType::ColonEquals => "`:=`".to_string(),
+                TokenType::Equals => "`=`".to_string(),
                 _ => unreachable!()
             },
             _ => str

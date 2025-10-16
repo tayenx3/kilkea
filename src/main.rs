@@ -129,6 +129,8 @@ fn run(input: String, output: Option<String>, debug: bool, parse_only: bool) {
                 .collect::<Vec<_>>()
                 .join("\n\n")
         );
+        if errors.len() > 1 { eprintln!("Found {}", format!("{} errors", errors.len()).red()); }
+        else { eprintln!("Found {}", format!("{} error", errors.len()).red()); }
         exit(1)
     }
     if debug {
@@ -150,6 +152,8 @@ fn run(input: String, output: Option<String>, debug: bool, parse_only: bool) {
                 .collect::<Vec<_>>()
                 .join("\n\n")
         );
+        if errors.len() > 1 { eprintln!("Found {}", format!("{} errors", r.len()).red()); }
+        else { eprintln!("Found {}", format!("{} error", r.len()).red()); }
         exit(1)
     }
 

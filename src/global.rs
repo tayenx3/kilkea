@@ -1,5 +1,6 @@
 use std::fmt;
 use std::collections::HashMap;
+use colored::Colorize;
 use cranelift::prelude::Value;
 use once_cell::unsync::Lazy;
 pub fn prec(op: &String) -> Option<(i32, i32)> {
@@ -119,4 +120,176 @@ pub enum CompilerSymbol {
 pub struct TypedValue {
     pub value: Value,
     pub type_: Type
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct Error {
+    pub code: ECode,
+    pub details: String,
+    pub span: Span,
+    pub src: String,
+    pub path: String,
+    pub note: Option<String>,
+    pub help: Option<String>
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.format())
+    }
+}
+
+impl Error {
+    fn format(&self) -> String {
+        const SPREAD: usize = 2;
+        
+        let mut output = String::new();
+        
+        // Header
+        output.push_str(&format!("{} {}\n", "error:".red().bold(), self.details.red()));
+        
+        // Location line
+        let location_info = self.format_location(SPREAD);
+        output.push_str(&location_info);
+        output.push_str(&format!(" {:width$} {}\n",
+            "",
+            "│".cyan(),
+            width = self.calculate_max_digits(
+                        self.span.line + SPREAD
+        )));
+        
+        // Error details
+        let error_line = self.format_error_line(SPREAD);
+        output.push_str(&error_line);
+        output.push_str(&format!("\n {:width$} {}",
+            "",
+            "│".cyan(),
+            width = self.calculate_max_digits(
+                        self.span.line + SPREAD
+        )));
+
+        if let Some(note) = &self.note {
+            output.push_str(
+                &format!(
+                    "\n {:width$} {} {}: {}", 
+                    "", 
+                    "=".cyan().bold(),
+                    "note".bold(),
+                    note, 
+                    width = self.calculate_max_digits(
+                        self.span.line + SPREAD
+                    )
+                )
+            )
+        }
+        if let Some(help) = &self.help {
+            output.push_str(
+                &format!(
+                    "\n {:width$} > {}: {}", 
+                    "",
+                    "hint".cyan().bold(), 
+                    help,
+                    width = self.calculate_max_digits(
+                        self.span.line + SPREAD
+                    )
+                )
+            )
+        }
+        
+        output
+    }
+
+    fn format_location(&self, spread: usize) -> String {
+        let line = self.span.line;
+        let digits = self.calculate_max_digits(line + spread);
+        
+        format!(
+            "{:width$}{} {}:{}:{}\n",
+            "",
+            "┌─".cyan().bold(),
+            self.path.italic(),
+            line + 1,
+            self.span.column,
+            width = digits + 2
+        )
+    }
+    
+    fn format_error_line(&self, spread: usize) -> String {
+        let line = self.span.line;
+        let lines: Vec<&str> = self.src.split('\n').collect();
+        let digits = self.calculate_max_digits(line + spread);
+        
+        let mut result = String::new();
+        
+        // Previous lines
+        result.push_str(&self.format_context_lines(line, spread, false, &lines, digits));
+        
+        // Main line
+        result.push_str(&format!(
+            " {:width$} {} {}\n",
+            (line + 1).to_string().cyan().bold(),
+            "│".cyan(),
+            lines[line],
+            width = digits
+        ));
+        result.push_str(&format!(
+            " {:width$} {} {}{} {}",
+            "",
+            "│".cyan(),
+            " ".repeat(self.span.column),
+            "¯".repeat(self.span.end_pos + 1 - self.span.start_pos).red().bold(),
+            self.details.red().bold(),
+            width = digits
+        ));
+        
+        // Next lines
+        result.push_str(&self.format_context_lines(line, spread, true, &lines, digits));
+        
+        result
+    }
+    
+    fn format_context_lines(
+        &self,
+        current_line: usize,
+        spread: usize,
+        is_after: bool,
+        lines: &[&str],
+        digits: usize,
+    ) -> String {
+        let mut context = String::new();
+        
+        let range = if is_after {
+            (1..=spread).collect::<Vec<_>>()
+        } else {
+            (1..=spread).rev().collect::<Vec<_>>()
+        };
+        
+        for i in range {
+            let target_line = if is_after {
+                current_line.checked_add(i)
+            } else {
+                current_line.checked_sub(i)
+            };
+            
+            if let Some(line_num) = target_line {
+                if line_num < lines.len() {
+                    let line_content = if is_after {
+                        format!("\n {:width$} {} {}", (line_num + 1).to_string().cyan().bold(), "│".cyan(), lines[line_num], width = digits)
+                    } else {
+                        format!(" {:width$} {} {}\n", (line_num + 1).to_string().cyan().bold(), "│".cyan(), lines[line_num], width = digits)
+                    };
+                    context.push_str(&line_content);
+                }
+            }
+        }
+        
+        context
+    }
+    
+    fn calculate_max_digits(&self, max_line_num: usize) -> usize {
+        if max_line_num == 0 {
+            1
+        } else {
+            max_line_num.ilog10() as usize + 1
+        }
+    }
 }

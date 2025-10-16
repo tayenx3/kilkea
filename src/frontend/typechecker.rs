@@ -5,7 +5,7 @@ use super::Error;
 
 pub struct TypeChecker {
     module: Module,
-    scopes: Vec<HashMap<Symbol, ()>>,
+    scopes: Vec<HashMap<Symbol, Span>>,
     src: String,
     path: String,
     type_registry: TypeRegistry
@@ -78,7 +78,7 @@ impl TypeChecker {
                             if *type_ != new {
                                 return Err(Error { 
                                     code: ECode::MutationError, 
-                                    details: format!("`{}` has type `{}` but the new value has type `{}`", i, type_, new), 
+                                    details: format!("`{}` expects type `{}` but found type `{}`", i, type_, new), 
                                     span, 
                                     src: self.src.clone(), 
                                     path: self.path.clone(),
@@ -194,22 +194,6 @@ impl TypeChecker {
                             help: None
                         })
                     },
-                    ":=" => {
-                        if let ASTNode::Identifier(s) = lhs.ast_repr {
-                            self.mutate_var(&s, node.span, right)?;
-                            Ok(Type::Unit)
-                        } else {
-                            Err(Error {
-                                code: ECode::MutationError,
-                                details: format!("can only mutate variables"),
-                                span: node.span,
-                                src: self.src.clone(),
-                                path: self.path.clone(),
-                                note: None,
-                                help: None
-                            })
-                        }
-                    }
                     _ => Err(Error {
                         code: ECode::MismatchedTypes,
                         details: format!("invalid operator - `{}`", op.0),
@@ -391,7 +375,7 @@ impl TypeChecker {
                         };
                         s.insert(Symbol::Variable {
                             name: name.0, type_: t, mutability
-                        }, ());
+                        }, node.span);
                     } else {
                         if self.type_registry.is_registered(&name.0) {
                             return Err(Error {
@@ -406,7 +390,7 @@ impl TypeChecker {
                         }
                         s.insert(Symbol::Variable {
                             name: name.0, type_: Type::Undetermined, mutability
-                        }, ());
+                        }, node.span);
                     }
                 }
 
@@ -456,7 +440,7 @@ impl TypeChecker {
                         };
                         s.insert(Symbol::Variable {
                             name: name.0, type_: t, mutability
-                        }, ());
+                        }, node.span);
                     } else {
                         if self.type_registry.is_registered(&name.0) {
                             return Err(Error {
@@ -471,7 +455,7 @@ impl TypeChecker {
                         }
                         s.insert(Symbol::Variable {
                             name: name.0, type_: value_type, mutability
-                        }, ());
+                        }, node.span);
                     }
                 }
 
@@ -488,6 +472,13 @@ impl TypeChecker {
                 self.check_node(*s)?;
                 Ok(Type::Unit)
             },
+            ASTNode::Mutation {
+                name, value
+            } => {
+                let value_type = self.check_node(*value)?;
+                self.mutate_var(&name.0, node.span, value_type)?;
+                Ok(Type::Unit)
+            }
         }
     }
 }

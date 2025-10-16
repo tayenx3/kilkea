@@ -4,7 +4,6 @@
 
 pub mod lexer;
 pub mod parser;
-pub mod plugins;
 pub mod typechecker;
 pub mod typeregistry;
 
@@ -12,7 +11,6 @@ pub mod typeregistry;
 pub use {
     lexer::*, 
     parser::*, 
-    plugins::*, 
     typechecker::*,
     typeregistry::*,
     super::global::*
