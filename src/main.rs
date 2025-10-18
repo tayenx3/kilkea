@@ -159,6 +159,7 @@ fn run(input: String, output: Option<String>, debug: bool, parse_only: bool) {
 
     if parse_only { exit(0) }
 
+    /*
     let mut compiler = match backend::ASTCompiler::new(
         debug,
         parsed,
@@ -203,7 +204,7 @@ fn run(input: String, output: Option<String>, debug: bool, parse_only: bool) {
     }
     if std::path::Path::new("output.o").exists() {
         let _ = std::fs::remove_file("output.o");
-    }
+    }*/
 }
 
 fn link_with_system_linker(object_files: &[&str], output: &str) -> Result<(), Box<dyn std::error::Error>> {

@@ -1,12 +1,6 @@
 //! # Backend Module
 //! 
-//! * Contains the AST compiler, and the Kilkwell codegen tool
+//! * Contains the AST compiler, and the IR codegen
 
-pub mod compiler;
-pub mod types;
-
-#[allow(unused_imports)]
-pub use {
-    compiler::*,
-    types::*,
-};
+pub mod ir;
+pub mod ir_tests;

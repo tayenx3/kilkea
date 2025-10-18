@@ -3,3 +3,5 @@
 
 - More documentation
 - Independent linking
+- Creating an AST compiler
+- Lowering IR to Cranelift
